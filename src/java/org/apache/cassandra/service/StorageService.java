@@ -896,6 +896,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
      */
     public void reportSeverity(double incr)
     {
+	logger.info ("Reporting severity of " + incr);
         bgMonitor.incrCompactionSeverity(incr);
     }
 

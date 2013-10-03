@@ -73,7 +73,7 @@ public class StreamTransferTask extends StreamTask
 
     public Collection<FileMessage> getFileMessages()
     {
-        return files.values();
+        return new ArrayList<>(files.values());
     }
 
     public FileMessage createMessageForRetry(int sequenceNumber)

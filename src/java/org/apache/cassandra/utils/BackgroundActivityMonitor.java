@@ -147,6 +147,8 @@ public class BackgroundActivityMonitor
     {
         public void run()
         {
+
+            logger.info("Running BackgroundActivityMonitor");
             double report = -1;
             try
             {
@@ -163,7 +165,9 @@ public class BackgroundActivityMonitor
 
             if (!Gossiper.instance.isEnabled())
                 return;
+            logger.info("Raw value for IOWait recorded to be " + report);
             VersionedValue updated = StorageService.instance.valueFactory.severity(report);
+            logger.info("VersionedValue for IOWait recorded to be " + updated);
             Gossiper.instance.addLocalApplicationState(ApplicationState.SEVERITY, updated);
         }
     }
