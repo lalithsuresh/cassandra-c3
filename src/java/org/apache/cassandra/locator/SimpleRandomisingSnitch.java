@@ -40,7 +40,6 @@ public class SimpleRandomisingSnitch extends AbstractEndpointSnitch
     @Override
     public void sortByProximity(final InetAddress address, List<InetAddress> addresses)
     {
-        // Optimization to avoid walking the list
     	Collections.shuffle(addresses);
     }
 
