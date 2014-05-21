@@ -26,6 +26,7 @@ import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.filter.*;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.service.CASConditions;
+import org.apache.cassandra.utils.Pair;
 
 /**
  * Processed CAS conditions on potentially multiple rows of the same partition.
@@ -52,7 +53,21 @@ public class CQL3CasConditions implements CASConditions
     {
         RowCondition previous = conditions.put(prefix.build(), new NotExistCondition(prefix, now));
         if (previous != null && !(previous instanceof NotExistCondition))
-            throw new InvalidRequestException("Cannot mix IF conditions and IF NOT EXISTS for the same row");
+        {
+            // these should be prevented by the parser, but it doesn't hurt to check
+            if (previous instanceof ExistCondition)
+                throw new InvalidRequestException("Cannot mix IF EXISTS and IF NOT EXISTS conditions for the same row");
+            else
+                throw new InvalidRequestException("Cannot mix IF conditions and IF NOT EXISTS for the same row");
+        }
+    }
+
+    public void addExist(ColumnNameBuilder prefix) throws InvalidRequestException
+    {
+        RowCondition previous = conditions.put(prefix.build(), new ExistCondition(prefix, now));
+        // this should be prevented by the parser, but it doesn't hurt to check
+        if (previous != null && previous instanceof NotExistCondition)
+            throw new InvalidRequestException("Cannot mix IF EXISTS and IF NOT EXISTS conditions for the same row");
     }
 
     public void addConditions(ColumnNameBuilder prefix, Collection<ColumnCondition> conds, List<ByteBuffer> variables) throws InvalidRequestException
@@ -130,9 +145,29 @@ public class CQL3CasConditions implements CASConditions
         }
     }
 
+    private static class ExistCondition extends RowCondition
+    {
+        private ExistCondition(ColumnNameBuilder rowPrefix, long now)
+        {
+            super (rowPrefix, now);
+        }
+
+        public boolean appliesTo(ColumnFamily current)
+        {
+            if (current == null)
+                return false;
+
+            Iterator<Column> iter = current.iterator(new ColumnSlice[]{ new ColumnSlice(rowPrefix.build(), rowPrefix.buildAsEndOfRange())});
+            while (iter.hasNext())
+                if (iter.next().isLive(now))
+                    return true;
+            return false;
+        }
+    }
+
     private static class ColumnsConditions extends RowCondition
     {
-        private final Map<ColumnIdentifier, ColumnCondition> conditions = new HashMap<>();
+        private final Map<Pair<ColumnIdentifier, ByteBuffer>, ColumnCondition.WithVariables> conditions = new HashMap<>();
 
         private ColumnsConditions(ColumnNameBuilder rowPrefix, long now)
         {
@@ -144,10 +179,11 @@ public class CQL3CasConditions implements CASConditions
             for (ColumnCondition condition : conds)
             {
                 // We will need the variables in appliesTo but with protocol batches, each condition in this object can have a
-                // different list of variables. So attach them to the condition directly, it's not particulary elegant but its simpler
-                ColumnCondition previous = conditions.put(condition.column.name, condition.attach(variables));
+                // different list of variables.
+                ColumnCondition.WithVariables current = condition.with(variables);
+                ColumnCondition.WithVariables previous = conditions.put(Pair.create(condition.column.name, current.getCollectionElementValue()), current);
                 // If 2 conditions are actually equal, let it slide
-                if (previous != null && !previous.equalsTo(condition))
+                if (previous != null && !previous.equalsTo(current))
                     throw new InvalidRequestException("Duplicate and incompatible conditions for column " + condition.column.name);
             }
         }
@@ -157,7 +193,7 @@ public class CQL3CasConditions implements CASConditions
             if (current == null)
                 return conditions.isEmpty();
 
-            for (ColumnCondition condition : conditions.values())
+            for (ColumnCondition.WithVariables condition : conditions.values())
                 if (!condition.appliesTo(rowPrefix, current, now))
                     return false;
             return true;

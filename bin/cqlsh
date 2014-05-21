@@ -51,6 +51,7 @@ import locale
 import platform
 import warnings
 import csv
+import getpass
 
 
 readline = None
@@ -467,6 +468,10 @@ class Shell(cmd.Cmd):
         self.hostname = hostname
         self.port = port
         self.transport_factory = transport_factory
+
+        if username and not password:
+            password = getpass.getpass()
+
         self.username = username
         self.password = password
         self.keyspace = keyspace
@@ -1378,7 +1383,8 @@ class Shell(cmd.Cmd):
             fname = os.path.expanduser(self.cql_unprotect_value(fname))
         copyoptnames = map(str.lower, parsed.get_binding('optnames', ()))
         copyoptvals = map(self.cql_unprotect_value, parsed.get_binding('optvals', ()))
-        opts = dict(zip(copyoptnames, copyoptvals))
+        cleancopyoptvals  = [optval.decode('string-escape') for optval in copyoptvals]
+        opts = dict(zip(copyoptnames, cleancopyoptvals))
 
         timestart = time.time()
 

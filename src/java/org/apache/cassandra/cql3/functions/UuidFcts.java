@@ -15,24 +15,28 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.cassandra.cql3.hooks;
+package org.apache.cassandra.cql3.functions;
 
-import org.apache.cassandra.cql3.CQLStatement;
-import org.apache.cassandra.exceptions.RequestValidationException;
+import java.nio.ByteBuffer;
+import java.util.List;
+import java.util.UUID;
 
-/**
- * Run directly after a CQL Statement is prepared in
- * {@link org.apache.cassandra.cql3.QueryProcessor}.
- */
-public interface PostPreparationHook
+import org.apache.cassandra.db.marshal.UUIDType;
+import org.apache.cassandra.serializers.UUIDSerializer;
+
+public abstract class UuidFcts
 {
-    /**
-     * Called in QueryProcessor, once a CQL statement has been prepared.
-     *
-     * @param statement the statement to perform additional processing on
-     * @param context preparation context containing additional info
-     *                about the operation and statement
-     * @throws RequestValidationException
-     */
-    void processStatement(CQLStatement statement, PreparationContext context) throws RequestValidationException;
+    public static final Function uuidFct = new AbstractFunction("uuid", UUIDType.instance)
+    {
+        public ByteBuffer execute(List<ByteBuffer> parameters)
+        {
+            return UUIDSerializer.instance.serialize(UUID.randomUUID());
+        }
+
+        @Override
+        public boolean isPure()
+        {
+            return false;
+        }
+    };
 }
