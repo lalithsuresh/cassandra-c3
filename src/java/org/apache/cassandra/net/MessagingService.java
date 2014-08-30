@@ -24,12 +24,17 @@ import java.nio.channels.AsynchronousCloseException;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.ServerSocketChannel;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
 
+import akka.actor.ActorRef;
+import akka.actor.ActorSystem;
+import akka.actor.Props;
 import com.google.common.base.Function;
 import com.google.common.collect.Lists;
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
@@ -59,7 +64,6 @@ import org.apache.cassandra.security.SSLFactory;
 import org.apache.cassandra.service.*;
 import org.apache.cassandra.service.paxos.Commit;
 import org.apache.cassandra.service.paxos.PrepareResponse;
-import org.apache.cassandra.streaming.*;
 import org.apache.cassandra.tracing.TraceState;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.*;
@@ -278,6 +282,11 @@ public final class MessagingService implements MessagingServiceMBean
     private final ConcurrentMap<InetAddress, DebuggableThreadPoolExecutor> streamExecutors = new NonBlockingHashMap<InetAddress, DebuggableThreadPoolExecutor>();
 
     private final NonBlockingHashMap<InetAddress, OutboundTcpConnectionPool> connectionManagers = new NonBlockingHashMap<InetAddress, OutboundTcpConnectionPool>();
+
+    /* Machete actor stuff goes here */
+    private final ActorSystem actorSystem = ActorSystem.create("Machete");
+    private final ConcurrentHashMap<InetAddress, ActorRef> actorMap = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<InetAddress, CopyOnWriteArrayList<String>> rgInvertedInex = new ConcurrentHashMap<>();
 
     private static final Logger logger = LoggerFactory.getLogger(MessagingService.class);
     private static final int LOG_DROPPED_INTERVAL_IN_MS = 5000;
@@ -964,5 +973,29 @@ public final class MessagingService implements MessagingServiceMBean
             result.put(ip, recent);
         }
         return result;
+    }
+
+    /* Machete methods */
+    public ActorRef getReplicaGroupActor(List<InetAddress> endpoints) {
+        final InetAddress rgOwner = endpoints.get(0);
+        ActorRef rgActor = actorMap.get(rgOwner);
+        if (rgActor == null) {
+            synchronized (this) {
+                if (!actorMap.containsKey(rgOwner)) {
+                    rgActor = actorSystem.actorOf(Props.create(ReplicaGroupActor.class), rgOwner.getHostName());
+                    final ActorRef result = actorMap.putIfAbsent(rgOwner, rgActor);
+                    if (result == null) {
+                        /* For every endpoint, we add the replica group actor's name to the list
+                         */
+                        for (InetAddress e : endpoints) {
+                            rgInvertedInex.putIfAbsent(e, new CopyOnWriteArrayList<String>());
+                            rgInvertedInex.get(e).add(rgOwner.getHostName());
+                        }
+                        return actorMap.get(rgOwner);
+                    }
+                }
+            }
+        }
+        return rgActor;
     }
 }

@@ -21,6 +21,7 @@ import java.net.InetAddress;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import akka.actor.ActorRef;
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.concurrent.StageManager;
 import org.apache.cassandra.config.CFMetaData;
@@ -49,7 +50,7 @@ public abstract class AbstractReadExecutor
     protected final ReadCommand command;
     protected final RowDigestResolver resolver;
     protected final List<InetAddress> unfiltered;
-    protected final List<InetAddress> endpoints;
+    public final List<InetAddress> endpoints;
     protected final ColumnFamilyStore cfs;
 
     AbstractReadExecutor(ColumnFamilyStore cfs,
@@ -72,6 +73,11 @@ public abstract class AbstractReadExecutor
 
     void executeAsync()
     {
+        ActorRef actor = MessagingService.instance().getReplicaGroupActor(handler.endpoints);
+        actor.tell(this, null);
+    }
+
+    public void pushRead() {
         // The data-request message is sent to dataPoint, the node that will actually get the data for us
         InetAddress dataPoint = handler.endpoints.get(0);
         if (dataPoint.equals(FBUtilities.getBroadcastAddress()) && StorageProxy.OPTIMIZE_LOCAL_REQUESTS)
