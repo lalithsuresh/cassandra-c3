@@ -1298,6 +1298,7 @@ public class StorageProxy implements StorageProxyMBean
             super(MessagingService.Verb.READ);
             this.command = command;
             this.handler = handler;
+            MessagingService.instance().getPendingRequestsCounter(FBUtilities.getBroadcastAddress()).incrementAndGet();
         }
 
         protected void runMayThrow()
@@ -1307,6 +1308,7 @@ public class StorageProxy implements StorageProxyMBean
             ReadResponse result = ReadVerbHandler.getResponse(command, r);
             MessagingService.instance().addLatency(FBUtilities.getBroadcastAddress(), TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start));
             handler.response(result);
+            MessagingService.instance().getPendingRequestsCounter(FBUtilities.getBroadcastAddress()).decrementAndGet();
         }
     }
 
@@ -1321,6 +1323,7 @@ public class StorageProxy implements StorageProxyMBean
             super(MessagingService.Verb.READ);
             this.command = command;
             this.handler = handler;
+            MessagingService.instance().getPendingRequestsCounter(FBUtilities.getBroadcastAddress()).incrementAndGet();
         }
 
         protected void runMayThrow()
@@ -1328,6 +1331,7 @@ public class StorageProxy implements StorageProxyMBean
             RangeSliceReply result = new RangeSliceReply(command.executeLocally());
             MessagingService.instance().addLatency(FBUtilities.getBroadcastAddress(), TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start));
             handler.response(result);
+            MessagingService.instance().getPendingRequestsCounter(FBUtilities.getBroadcastAddress()).decrementAndGet();
         }
     }
 

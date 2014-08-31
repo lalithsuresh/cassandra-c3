@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.net;
 
+import java.nio.ByteBuffer;
 import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;

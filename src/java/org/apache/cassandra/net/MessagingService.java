@@ -35,9 +35,9 @@ import javax.management.ObjectName;
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
 import akka.actor.Props;
+import akka.io.Inet;
 import com.google.common.base.Function;
 import com.google.common.collect.Lists;
-import com.google.common.util.concurrent.RateLimiter;
 import com.typesafe.config.Config;
 import org.apache.cassandra.metrics.*;
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
@@ -286,14 +286,6 @@ public final class MessagingService implements MessagingServiceMBean
     private final NonBlockingHashMap<InetAddress, OutboundTcpConnectionPool> connectionManagers = new NonBlockingHashMap<InetAddress, OutboundTcpConnectionPool>();
 
     /* Machete actor stuff goes here */
-    private static final long RECEIVE_RATE_INTERVAL = 20;
-    private static final long RECEIVE_RATE_INITIAL = 100;
-
-    // Constants for cubic function
-    private static final double CUBIC_BETA = 0.2;
-    private static final double CUBIC_C = 0.000004;
-    private static final double CUBIC_SMAX = 10;
-    private static final double CUBIC_HYSTERISIS_FACTOR = 4;
     private final Config config = ConfigFactory.parseString("my-dispatcher {\n" +
             "  type = Dispatcher\n" +
             "  executor = \"fork-join-executor\"\n" +
@@ -308,13 +300,9 @@ public final class MessagingService implements MessagingServiceMBean
     private final ActorSystem actorSystem = ActorSystem.create("Machete", config);
     private final ConcurrentHashMap<InetAddress, ActorRef> actorMap = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<InetAddress, CopyOnWriteArrayList<String>> rgInvertedInex = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<InetAddress, SimpleRateLimiter> sendingRateLimiters = new ConcurrentHashMap<>();
-    private final ConcurrentMap<InetAddress, Long> timeOfLastRateDecrease = new ConcurrentHashMap<>();
-    private final ConcurrentMap<InetAddress, Long> timeOfLastRateIncrease = new ConcurrentHashMap<>();
-    private final ConcurrentMap<InetAddress, Double> valueOfLastDecrease = new ConcurrentHashMap<InetAddress, Double>();
-    private final ConcurrentMap<InetAddress, SlottedRateTracker> receiveRateTracker =
-            new ConcurrentHashMap<InetAddress, SlottedRateTracker>();
     private final ConcurrentHashMap<InetAddress, AtomicInteger> pendingRequests = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<InetAddress, SendReceiveRateContainer> sendReceiveRateContainers
+            = new ConcurrentHashMap<>();
 
     private static final Logger logger = LoggerFactory.getLogger(MessagingService.class);
     private static final int LOG_DROPPED_INTERVAL_IN_MS = 5000;
@@ -1051,69 +1039,99 @@ public final class MessagingService implements MessagingServiceMBean
     }
 
     public double sendingRateTryAcquire(InetAddress endpoint) {
-        SimpleRateLimiter rateLimiter = sendingRateLimiters.get(endpoint);
+        SendReceiveRateContainer rateContainer = sendReceiveRateContainers.get(endpoint);
 
-        if (rateLimiter == null) {
-            System.out.println("Creaing rateLimiter " + endpoint);
-            sendingRateLimiters.putIfAbsent(endpoint, new SimpleRateLimiter(1, RECEIVE_RATE_INTERVAL, 50));
-            receiveRateTracker.putIfAbsent(endpoint,new SlottedRateTracker(RECEIVE_RATE_INITIAL,
-                                                                           RECEIVE_RATE_INTERVAL));
-            timeOfLastRateDecrease.putIfAbsent(endpoint, 0L);
-            timeOfLastRateIncrease.putIfAbsent(endpoint, 0L);
-            valueOfLastDecrease.putIfAbsent(endpoint, (double) 0);
-            rateLimiter = sendingRateLimiters.get(endpoint);
+        if (rateContainer == null) {
+            sendReceiveRateContainers.putIfAbsent(endpoint, new SendReceiveRateContainer(endpoint));
+            rateContainer = sendReceiveRateContainers.get(endpoint);
         }
 
-        assert(rateLimiter != null);
-        return rateLimiter.tryAcquire();
+        assert(rateContainer != null);
+        return rateContainer.tryAcquire();
     }
 
     public void receiveRateTick(InetAddress endpoint) {
-        SlottedRateTracker rateTracker = receiveRateTracker.get(endpoint);
+        SendReceiveRateContainer rateContainer = sendReceiveRateContainers.get(endpoint);
 
-        if (rateTracker == null) {
-            rateTracker = new SlottedRateTracker(RECEIVE_RATE_INITIAL, RECEIVE_RATE_INTERVAL);
-            receiveRateTracker.putIfAbsent(endpoint, rateTracker);
+        if (rateContainer == null) {
+            sendReceiveRateContainers.putIfAbsent(endpoint, new SendReceiveRateContainer(endpoint));
+            rateContainer = sendReceiveRateContainers.get(endpoint);
         }
 
-        rateTracker.add(1);
+        assert(rateContainer != null);
+        rateContainer.receiveRateTrackerTick();
     }
 
-    public double getReceiveRate(InetAddress endpoint) {
-        SlottedRateTracker rateTracker = receiveRateTracker.get(endpoint);
+    public void updateRates(final InetAddress endpoint) {
+        final SendReceiveRateContainer rateContainer = sendReceiveRateContainers.get(endpoint);
 
-        if (rateTracker == null) {
-            rateTracker = new SlottedRateTracker(RECEIVE_RATE_INITIAL, RECEIVE_RATE_INTERVAL);
-            receiveRateTracker.putIfAbsent(endpoint, rateTracker);
+        assert(rateContainer != null);
+
+        rateContainer.updateCubicSendingRate();
+    }
+
+    public AtomicInteger getPendingRequestsCounter(final InetAddress endpoint) {
+        AtomicInteger counter = MessagingService.instance().pendingRequests.get(FBUtilities.getBroadcastAddress());
+        if(counter == null) {
+            MessagingService.instance().pendingRequests.put(FBUtilities.getBroadcastAddress(), new AtomicInteger(0));
+            counter = MessagingService.instance().pendingRequests.get(FBUtilities.getBroadcastAddress());
         }
 
-        return rateTracker.getCurrentRate();
+        return counter;
     }
 
-    public void updateRates(InetAddress endpoint) {
-        final SimpleRateLimiter sendingRateLimiter = sendingRateLimiters.get(endpoint);
+    private class SendReceiveRateContainer {
+        private static final long RECEIVE_RATE_INTERVAL_MS = 20;
+        private static final long RECEIVE_RATE_INITIAL = 100;
 
-        assert(sendingRateLimiter != null);
-        synchronized (sendingRateLimiter) {
-            final SlottedRateTracker receiveRate = receiveRateTracker.get(endpoint);
-            final double currentReceiveRate = receiveRate.getCurrentRate();
+        // Constants for cubic function
+        private static final double CUBIC_BETA = 0.2;
+        private static final double CUBIC_C = 0.000004;
+        private static final double CUBIC_SMAX = 10;
+        private static final double CUBIC_HYSTERISIS_FACTOR = 4;
+        private static final double CUBIC_BETA_BY_C = CUBIC_BETA / CUBIC_C;
+        private static final double CUBIC_HYSTERISIS_DURATION = RECEIVE_RATE_INTERVAL_MS * CUBIC_HYSTERISIS_FACTOR;
+
+        private final InetAddress endpoint;
+        private final SimpleRateLimiter sendingRateLimiter;
+        private final SlottedRateTracker receiveRateTracker;
+
+        private long timeOfLastRateDecrease = 0L;
+        private long timeOfLastRateIncrease = 0L;
+        private double Rmax = 0;
+
+
+
+        SendReceiveRateContainer(InetAddress endpoint) {
+            this.endpoint = endpoint;
+            this.sendingRateLimiter = new SimpleRateLimiter(1, RECEIVE_RATE_INTERVAL_MS, 50);
+            this.receiveRateTracker = new SlottedRateTracker(RECEIVE_RATE_INITIAL, RECEIVE_RATE_INTERVAL_MS);
+        }
+
+        public double tryAcquire() {
+            return sendingRateLimiter.tryAcquire();
+        }
+
+        public void receiveRateTrackerTick() {
+            receiveRateTracker.add(1);
+        }
+
+        public synchronized void updateCubicSendingRate() {
+            final double currentReceiveRate = receiveRateTracker.getCurrentRate();
             final double currentSendingRate = sendingRateLimiter.getRate();
             final long now = System.currentTimeMillis();
-            final Long timeOfLastDecrease = timeOfLastRateDecrease.get(endpoint);
-            final Long timeOfLastIncrease = timeOfLastRateIncrease.get(endpoint);
 
             if (currentSendingRate > currentReceiveRate
-                && (now - timeOfLastIncrease > RECEIVE_RATE_INTERVAL * CUBIC_HYSTERISIS_FACTOR)) {
-                valueOfLastDecrease.put(endpoint, currentSendingRate);
+                    && (now - timeOfLastRateIncrease > CUBIC_HYSTERISIS_DURATION)) {
+                Rmax = currentSendingRate;
                 sendingRateLimiter.setRate(Math.max(currentSendingRate * CUBIC_BETA, 0.001));
-                timeOfLastRateDecrease.put(endpoint, now);
+                timeOfLastRateDecrease = now;
             }
             else if (currentSendingRate < currentReceiveRate) {
-                double T = System.currentTimeMillis() - timeOfLastDecrease;
-                timeOfLastRateIncrease.put(endpoint, now);
-                double Rmax = valueOfLastDecrease.get(endpoint);
-                double scalingFactor = Math.cbrt(Rmax * CUBIC_BETA / CUBIC_C);
-                double newSendingRate = CUBIC_C * Math.pow(T - scalingFactor, 3) + Rmax;
+                final double T = System.currentTimeMillis() - timeOfLastRateDecrease;
+                timeOfLastRateIncrease = now;
+                final double scalingFactor = Math.cbrt(Rmax * CUBIC_BETA_BY_C);
+                final double newSendingRate = CUBIC_C * Math.pow(T - scalingFactor, 3) + Rmax;
 
                 if (newSendingRate - currentSendingRate > CUBIC_SMAX) {
                     sendingRateLimiter.setRate(currentSendingRate + CUBIC_SMAX);
@@ -1123,6 +1141,11 @@ public final class MessagingService implements MessagingServiceMBean
 
                 assert(newSendingRate > 0);
             }
+
+//            System.out.println(System.currentTimeMillis() + " " + endpoint +
+//                        " OldRate: " + currentSendingRate +
+//                        " NewRate: " + sendingRateLimiter.getRate() +
+//                        " ReceiveRate: " + currentReceiveRate);
         }
     }
 

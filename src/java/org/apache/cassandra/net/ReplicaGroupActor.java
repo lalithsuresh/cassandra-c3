@@ -51,7 +51,8 @@ public class ReplicaGroupActor extends UntypedActorWithStash {
         }
     }
 
-    private void switchToWaiting(long durationToWait) {
+    private void switchToWaiting(final long durationToWait) {
+        System.out.println("Switching to waiting " + durationToWait);
         getContext().become(WAITING_STATE, false);
         getContext().system().scheduler().scheduleOnce(
                 Duration.create(durationToWait, TimeUnit.NANOSECONDS),

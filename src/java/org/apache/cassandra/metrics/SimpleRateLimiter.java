@@ -26,7 +26,7 @@ public class SimpleRateLimiter {
         if (tokens >= 1) {
             tokens -= 1;
             lastSent = System.nanoTime();
-            return 0L;
+            return 0;
         }
         else {
             return (1 - tokens) * rateInterval/rate; // Nanoseconds
@@ -37,7 +37,7 @@ public class SimpleRateLimiter {
         return rate;
     }
 
-    public synchronized void setRate(double rate) {
+    public synchronized void setRate(final double rate) {
         this.rate = rate;
     }
 }

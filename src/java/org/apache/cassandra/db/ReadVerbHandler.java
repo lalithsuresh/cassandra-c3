@@ -17,16 +17,17 @@
  */
 package org.apache.cassandra.db;
 
+import org.apache.cassandra.net.*;
+import org.apache.cassandra.serializers.IntegerSerializer;
+import org.apache.cassandra.utils.FBUtilities;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.cassandra.net.IVerbHandler;
-import org.apache.cassandra.net.MessageIn;
-import org.apache.cassandra.net.MessageOut;
-import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.ByteBufferUtil;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class ReadVerbHandler implements IVerbHandler<ReadCommand>
 {
@@ -39,13 +40,19 @@ public class ReadVerbHandler implements IVerbHandler<ReadCommand>
             throw new RuntimeException("Cannot service reads while bootstrapping!");
         }
 
+        AtomicInteger counter = MessagingService.instance().getPendingRequestsCounter(FBUtilities.getBroadcastAddress());
+        counter.incrementAndGet();
+        long start = System.nanoTime();
         ReadCommand command = message.payload;
         Keyspace keyspace = Keyspace.open(command.ksName);
         Row row = command.getRow(keyspace);
 
+        int queueSize = counter.decrementAndGet();
         MessageOut<ReadResponse> reply = new MessageOut<ReadResponse>(MessagingService.Verb.REQUEST_RESPONSE,
                                                                       getResponse(command, row),
-                                                                      ReadResponse.serializer);
+                                                                      ReadResponse.serializer)
+                .withParameter(MacheteMetrics.MU, ByteBufferUtil.bytes(System.nanoTime() - start).array())
+                .withParameter(MacheteMetrics.QSZ, ByteBufferUtil.bytes(queueSize).array());
         Tracing.trace("Enqueuing response to {}", message.from);
         MessagingService.instance().sendReply(reply, id, message.from);
     }
