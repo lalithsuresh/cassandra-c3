@@ -18,6 +18,7 @@
 package org.apache.cassandra.service;
 
 import java.net.InetAddress;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -25,6 +26,7 @@ import akka.actor.ActorRef;
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.concurrent.StageManager;
 import org.apache.cassandra.config.CFMetaData;
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.config.ReadRepairDecision;
 import org.apache.cassandra.db.ColumnFamilyStore;
@@ -35,7 +37,9 @@ import org.apache.cassandra.db.Row;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.exceptions.ReadTimeoutException;
 import org.apache.cassandra.exceptions.UnavailableException;
+import org.apache.cassandra.locator.SelectionStrategy;
 import org.apache.cassandra.metrics.ReadRepairMetrics;
+import org.apache.cassandra.metrics.TokenBucket;
 import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.service.StorageProxy.LocalReadRunnable;
@@ -50,7 +54,7 @@ public abstract class AbstractReadExecutor
     protected final ReadCommand command;
     protected final RowDigestResolver resolver;
     protected final List<InetAddress> unfiltered;
-    public final List<InetAddress> endpoints;
+    protected List<InetAddress> endpoints;
     protected final ColumnFamilyStore cfs;
 
     AbstractReadExecutor(ColumnFamilyStore cfs,
@@ -77,7 +81,55 @@ public abstract class AbstractReadExecutor
         actor.tell(this, null);
     }
 
-    public void pushRead() {
+    public double pushRead() {
+
+        // We block until the upstream queues look all right if we're using one of our
+        // strategies
+        if (!DatabaseDescriptor.getScoreStrategy().equals(SelectionStrategy.DEFAULT)) {
+            List<InetAddress> newEndpointList = StorageProxy.getLiveSortedEndpoints(Keyspace.open(command.ksName), command.key);
+            int originalSize = handler.endpoints.size();
+            boolean shouldWait = true;
+            int dataEndpointIndex = 0;
+
+            //
+            // This is our backpressure knob. If we exceed the rate, bail.
+            // Every token bucket's tryAcquire() gives us the duration we need
+            // to wait until the rate is available again. If all token buckets
+            // are empty, then we tell the corresponding actor to wait for the
+            // minimum duration required until one of the rate limiters is available.
+            //
+
+            double minimumDurationToWait = Double.MAX_VALUE;
+            for(int i = 0; i < newEndpointList.size(); i++) {
+                final InetAddress ep = newEndpointList.get(i);
+                double timeToNextRefill = 0L;
+                if (!ep.equals(FBUtilities.getBroadcastAddress())) {
+                    timeToNextRefill = MessagingService.instance().sendingRateTryAcquire(ep);
+                }
+
+                if (timeToNextRefill == 0L) {
+                    dataEndpointIndex = i;
+                    shouldWait = false;
+
+                    // Other parts of the code require this endpoint-mapping
+                    // to be ordered such that the data-endpoint is the first
+                    // one. Let's do that now itself.
+                    Collections.<InetAddress>swap(newEndpointList, dataEndpointIndex, 0);
+                    break;
+                }
+
+                minimumDurationToWait = Math.min(minimumDurationToWait, timeToNextRefill);
+            }
+
+            if (shouldWait == true) {
+                return minimumDurationToWait;
+            }
+
+            // We're within our expected rate. Update le endpoints.
+            this.endpoints = newEndpointList.subList(0, originalSize);
+            handler.endpoints = this.endpoints;
+        }
+
         // The data-request message is sent to dataPoint, the node that will actually get the data for us
         InetAddress dataPoint = handler.endpoints.get(0);
         if (dataPoint.equals(FBUtilities.getBroadcastAddress()) && StorageProxy.OPTIMIZE_LOCAL_REQUESTS)
@@ -92,7 +144,7 @@ public abstract class AbstractReadExecutor
         }
 
         if (handler.endpoints.size() == 1)
-            return;
+            return 0L;
 
         // send the other endpoints a digest request
         ReadCommand digestCommand = command.copy();
@@ -116,6 +168,8 @@ public abstract class AbstractReadExecutor
                 MessagingService.instance().sendRR(message, digestPoint, handler);
             }
         }
+
+        return 0L;
     }
 
     void speculate()

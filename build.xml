@@ -376,6 +376,7 @@
           <dependency groupId="org.mindrot" artifactId="jbcrypt" version="0.3m" />
           <dependency groupId="io.netty" artifactId="netty" version="3.5.9.Final" />
           <dependency groupId="org.scala-lang" artifactId="scala-library" version="2.10.3-RC1" />
+          <dependency groupId="com.typesafe" artifactId="config" version="1.2.1" />
         </dependencyManagement>
         <developer id="alakshman" name="Avinash Lakshman"/>
         <developer id="antelder" name="Anthony Elder"/>
@@ -472,6 +473,7 @@
         <dependency groupId="com.github.stephenc" artifactId="jamm"/>
         <dependency groupId="io.netty" artifactId="netty"/>
         <dependency groupId="org.scala-lang" artifactId="scala-library" version="2.10.3-RC1" />
+        <dependency groupId="com.typesafe" artifactId="config" version="1.2.1" />
       </artifact:pom>
       <artifact:pom id="thrift-pom"
                     artifactId="cassandra-thrift"

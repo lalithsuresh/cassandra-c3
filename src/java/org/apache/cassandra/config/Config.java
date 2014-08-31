@@ -20,6 +20,7 @@ package org.apache.cassandra.config;
 import org.apache.cassandra.config.EncryptionOptions.ClientEncryptionOptions;
 import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions;
 import org.apache.cassandra.io.util.NativeAllocator;
+import org.apache.cassandra.locator.SelectionStrategy;
 import org.apache.cassandra.utils.FBUtilities;
 
 /**
@@ -135,6 +136,7 @@ public class Config
     public Integer dynamic_snitch_update_interval_in_ms = 100;
     public Integer dynamic_snitch_reset_interval_in_ms = 600000;
     public Double dynamic_snitch_badness_threshold = 0.1;
+    public SelectionStrategy score_strategy = SelectionStrategy.DEFAULT;
 
     public String request_scheduler;
     public RequestSchedulerId request_scheduler_id;

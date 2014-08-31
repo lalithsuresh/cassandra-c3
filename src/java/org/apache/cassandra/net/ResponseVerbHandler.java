@@ -31,7 +31,7 @@ public class ResponseVerbHandler implements IVerbHandler
     public void doVerb(MessageIn message, int id)
     {
         long latency = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - MessagingService.instance().getRegisteredCallbackAge(id));
-        CallbackInfo callbackInfo = MessagingService.instance().removeRegisteredCallback(id);
+        CallbackInfo callbackInfo = MessagingService.instance().removeRegisteredCallback(id, message.from);
         if (callbackInfo == null)
         {
             String msg = "Callback already removed for {} (from {})";

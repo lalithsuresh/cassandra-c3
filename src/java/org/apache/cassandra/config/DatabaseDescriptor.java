@@ -26,6 +26,7 @@ import java.util.*;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.primitives.Longs;
+import org.apache.cassandra.locator.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -41,10 +42,6 @@ import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.FSWriteError;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.io.util.IAllocator;
-import org.apache.cassandra.locator.DynamicEndpointSnitch;
-import org.apache.cassandra.locator.EndpointSnitchInfo;
-import org.apache.cassandra.locator.IEndpointSnitch;
-import org.apache.cassandra.locator.SeedProvider;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.scheduler.IRequestScheduler;
 import org.apache.cassandra.scheduler.NoScheduler;
@@ -1062,6 +1059,17 @@ public class DatabaseDescriptor
     {
         conf.dynamic_snitch_badness_threshold = dynamicBadnessThreshold;
     }
+
+    public static SelectionStrategy getScoreStrategy()
+    {
+        return conf.score_strategy;
+    }
+
+    public static void setScoreStrategy(SelectionStrategy score_strategy)
+    {
+        conf.score_strategy= score_strategy;
+    }
+
 
     public static ServerEncryptionOptions getServerEncryptionOptions()
     {

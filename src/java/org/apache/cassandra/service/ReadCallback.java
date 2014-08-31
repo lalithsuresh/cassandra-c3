@@ -51,7 +51,7 @@ public class ReadCallback<TMessage, TResolved> implements IAsyncCallback<TMessag
     private final SimpleCondition condition = new SimpleCondition();
     final long start;
     private final int blockfor;
-    final List<InetAddress> endpoints;
+    List<InetAddress> endpoints;
     private final IReadCommand command;
     private final ConsistencyLevel consistencyLevel;
     private final AtomicInteger received = new AtomicInteger(0);

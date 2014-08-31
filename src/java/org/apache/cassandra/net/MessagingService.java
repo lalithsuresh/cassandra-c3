@@ -37,6 +37,9 @@ import akka.actor.ActorSystem;
 import akka.actor.Props;
 import com.google.common.base.Function;
 import com.google.common.collect.Lists;
+import com.google.common.util.concurrent.RateLimiter;
+import com.typesafe.config.Config;
+import org.apache.cassandra.metrics.*;
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -56,8 +59,6 @@ import org.apache.cassandra.gms.GossipDigestAck2;
 import org.apache.cassandra.gms.GossipDigestSyn;
 import org.apache.cassandra.io.IVersionedSerializer;
 import org.apache.cassandra.locator.ILatencySubscriber;
-import org.apache.cassandra.metrics.ConnectionMetrics;
-import org.apache.cassandra.metrics.DroppedMessageMetrics;
 import org.apache.cassandra.net.sink.SinkManager;
 import org.apache.cassandra.repair.messages.RepairMessage;
 import org.apache.cassandra.security.SSLFactory;
@@ -67,6 +68,7 @@ import org.apache.cassandra.service.paxos.PrepareResponse;
 import org.apache.cassandra.tracing.TraceState;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.*;
+import com.typesafe.config.ConfigFactory;
 
 public final class MessagingService implements MessagingServiceMBean
 {
@@ -284,9 +286,35 @@ public final class MessagingService implements MessagingServiceMBean
     private final NonBlockingHashMap<InetAddress, OutboundTcpConnectionPool> connectionManagers = new NonBlockingHashMap<InetAddress, OutboundTcpConnectionPool>();
 
     /* Machete actor stuff goes here */
-    private final ActorSystem actorSystem = ActorSystem.create("Machete");
+    private static final long RECEIVE_RATE_INTERVAL = 20;
+    private static final long RECEIVE_RATE_INITIAL = 100;
+
+    // Constants for cubic function
+    private static final double CUBIC_BETA = 0.2;
+    private static final double CUBIC_C = 0.000004;
+    private static final double CUBIC_SMAX = 10;
+    private static final double CUBIC_HYSTERISIS_FACTOR = 4;
+    private final Config config = ConfigFactory.parseString("my-dispatcher {\n" +
+            "  type = Dispatcher\n" +
+            "  executor = \"fork-join-executor\"\n" +
+            "  fork-join-executor {\n" +
+            "    parallelism-min = 2\n" +
+            "    parallelism-factor = 2.0\n" +
+            "    parallelism-max = 20\n" +
+            "  }\n" +
+            "  throughput = 10\n" +
+            "}\n");
+
+    private final ActorSystem actorSystem = ActorSystem.create("Machete", config);
     private final ConcurrentHashMap<InetAddress, ActorRef> actorMap = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<InetAddress, CopyOnWriteArrayList<String>> rgInvertedInex = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<InetAddress, SimpleRateLimiter> sendingRateLimiters = new ConcurrentHashMap<>();
+    private final ConcurrentMap<InetAddress, Long> timeOfLastRateDecrease = new ConcurrentHashMap<>();
+    private final ConcurrentMap<InetAddress, Long> timeOfLastRateIncrease = new ConcurrentHashMap<>();
+    private final ConcurrentMap<InetAddress, Double> valueOfLastDecrease = new ConcurrentHashMap<InetAddress, Double>();
+    private final ConcurrentMap<InetAddress, SlottedRateTracker> receiveRateTracker =
+            new ConcurrentHashMap<InetAddress, SlottedRateTracker>();
+    private final ConcurrentHashMap<InetAddress, AtomicInteger> pendingRequests = new ConcurrentHashMap<>();
 
     private static final Logger logger = LoggerFactory.getLogger(MessagingService.class);
     private static final int LOG_DROPPED_INTERVAL_IN_MS = 5000;
@@ -334,7 +362,6 @@ public final class MessagingService implements MessagingServiceMBean
             droppedMessages.put(verb, new DroppedMessageMetrics(verb));
             lastDroppedInternal.put(verb, 0);
         }
-
         listenGate = new SimpleCondition();
         verbHandlers = new EnumMap<Verb, IVerbHandler>(Verb.class);
         Runnable logDropped = new Runnable()
@@ -354,6 +381,13 @@ public final class MessagingService implements MessagingServiceMBean
                 maybeAddLatency(expiredCallbackInfo.callback, expiredCallbackInfo.target, pair.right.timeout);
                 ConnectionMetrics.totalTimeouts.mark();
                 getConnectionPool(expiredCallbackInfo.target).incrementTimeout();
+
+                if (expiredCallbackInfo != null
+                        && (callbackDeserializers.get(Verb.READ).equals(expiredCallbackInfo.serializer))) {
+                    int count = pendingRequests.get(expiredCallbackInfo.target).decrementAndGet();
+                    logger.trace("Decrementing pendingJob count Endpoint: {}, Count: {} ", expiredCallbackInfo.target, count);
+                }
+
 
                 if (expiredCallbackInfo.shouldHint())
                 {
@@ -593,6 +627,14 @@ public final class MessagingService implements MessagingServiceMBean
     public int sendRR(MessageOut message, InetAddress to, IAsyncCallback cb, long timeout)
     {
         int id = addCallback(cb, message, to, timeout);
+
+        if(message.verb.equals(Verb.READ)) {
+            if(!pendingRequests.containsKey(to)) {
+                pendingRequests.put(to, new AtomicInteger(0));
+            }
+            int val = pendingRequests.get(to).incrementAndGet();
+        }
+
         sendOneWay(message, id, to);
         return id;
     }
@@ -718,9 +760,18 @@ public final class MessagingService implements MessagingServiceMBean
         return callbacks.get(messageId);
     }
 
-    public CallbackInfo removeRegisteredCallback(int messageId)
+    public CallbackInfo removeRegisteredCallback(int messageId, InetAddress endpoint)
     {
-        return callbacks.remove(messageId);
+        CallbackInfo ret = callbacks.remove(messageId);
+
+        if (ret != null && (callbackDeserializers.get(Verb.READ).equals(ret.serializer))) {
+            receiveRateTick(endpoint);
+            updateRates(endpoint);
+            int count = pendingRequests.get(endpoint).decrementAndGet();
+            logger.trace("Decrementing pendingJob count Endpoint: {}, Count: {} ", endpoint, count);
+        }
+
+        return ret;
     }
 
     /**
@@ -982,7 +1033,7 @@ public final class MessagingService implements MessagingServiceMBean
         if (rgActor == null) {
             synchronized (this) {
                 if (!actorMap.containsKey(rgOwner)) {
-                    rgActor = actorSystem.actorOf(Props.create(ReplicaGroupActor.class), rgOwner.getHostName());
+                    rgActor = actorSystem.actorOf(Props.create(ReplicaGroupActor.class).withDispatcher("my-dispatcher"), rgOwner.getHostName());
                     final ActorRef result = actorMap.putIfAbsent(rgOwner, rgActor);
                     if (result == null) {
                         /* For every endpoint, we add the replica group actor's name to the list
@@ -991,11 +1042,88 @@ public final class MessagingService implements MessagingServiceMBean
                             rgInvertedInex.putIfAbsent(e, new CopyOnWriteArrayList<String>());
                             rgInvertedInex.get(e).add(rgOwner.getHostName());
                         }
-                        return actorMap.get(rgOwner);
                     }
                 }
             }
+            return actorMap.get(rgOwner);
         }
         return rgActor;
     }
+
+    public double sendingRateTryAcquire(InetAddress endpoint) {
+        SimpleRateLimiter rateLimiter = sendingRateLimiters.get(endpoint);
+
+        if (rateLimiter == null) {
+            System.out.println("Creaing rateLimiter " + endpoint);
+            sendingRateLimiters.putIfAbsent(endpoint, new SimpleRateLimiter(1, RECEIVE_RATE_INTERVAL, 50));
+            receiveRateTracker.putIfAbsent(endpoint,new SlottedRateTracker(RECEIVE_RATE_INITIAL,
+                                                                           RECEIVE_RATE_INTERVAL));
+            timeOfLastRateDecrease.putIfAbsent(endpoint, 0L);
+            timeOfLastRateIncrease.putIfAbsent(endpoint, 0L);
+            valueOfLastDecrease.putIfAbsent(endpoint, (double) 0);
+            rateLimiter = sendingRateLimiters.get(endpoint);
+        }
+
+        assert(rateLimiter != null);
+        return rateLimiter.tryAcquire();
+    }
+
+    public void receiveRateTick(InetAddress endpoint) {
+        SlottedRateTracker rateTracker = receiveRateTracker.get(endpoint);
+
+        if (rateTracker == null) {
+            rateTracker = new SlottedRateTracker(RECEIVE_RATE_INITIAL, RECEIVE_RATE_INTERVAL);
+            receiveRateTracker.putIfAbsent(endpoint, rateTracker);
+        }
+
+        rateTracker.add(1);
+    }
+
+    public double getReceiveRate(InetAddress endpoint) {
+        SlottedRateTracker rateTracker = receiveRateTracker.get(endpoint);
+
+        if (rateTracker == null) {
+            rateTracker = new SlottedRateTracker(RECEIVE_RATE_INITIAL, RECEIVE_RATE_INTERVAL);
+            receiveRateTracker.putIfAbsent(endpoint, rateTracker);
+        }
+
+        return rateTracker.getCurrentRate();
+    }
+
+    public void updateRates(InetAddress endpoint) {
+        final SimpleRateLimiter sendingRateLimiter = sendingRateLimiters.get(endpoint);
+
+        assert(sendingRateLimiter != null);
+        synchronized (sendingRateLimiter) {
+            final SlottedRateTracker receiveRate = receiveRateTracker.get(endpoint);
+            final double currentReceiveRate = receiveRate.getCurrentRate();
+            final double currentSendingRate = sendingRateLimiter.getRate();
+            final long now = System.currentTimeMillis();
+            final Long timeOfLastDecrease = timeOfLastRateDecrease.get(endpoint);
+            final Long timeOfLastIncrease = timeOfLastRateIncrease.get(endpoint);
+
+            if (currentSendingRate > currentReceiveRate
+                && (now - timeOfLastIncrease > RECEIVE_RATE_INTERVAL * CUBIC_HYSTERISIS_FACTOR)) {
+                valueOfLastDecrease.put(endpoint, currentSendingRate);
+                sendingRateLimiter.setRate(Math.max(currentSendingRate * CUBIC_BETA, 0.001));
+                timeOfLastRateDecrease.put(endpoint, now);
+            }
+            else if (currentSendingRate < currentReceiveRate) {
+                double T = System.currentTimeMillis() - timeOfLastDecrease;
+                timeOfLastRateIncrease.put(endpoint, now);
+                double Rmax = valueOfLastDecrease.get(endpoint);
+                double scalingFactor = Math.cbrt(Rmax * CUBIC_BETA / CUBIC_C);
+                double newSendingRate = CUBIC_C * Math.pow(T - scalingFactor, 3) + Rmax;
+
+                if (newSendingRate - currentSendingRate > CUBIC_SMAX) {
+                    sendingRateLimiter.setRate(currentSendingRate + CUBIC_SMAX);
+                } else {
+                    sendingRateLimiter.setRate(newSendingRate);
+                }
+
+                assert(newSendingRate > 0);
+            }
+        }
+    }
+
 }
