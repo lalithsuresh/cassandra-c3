@@ -33,6 +33,7 @@ import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.FBUtilities;
 
 import com.yammer.metrics.stats.ExponentiallyDecayingSample;
+import org.hsqldb.Database;
 
 /**
  * A dynamic snitch that sorts endpoints by latency with an adapted phi failure detector
@@ -138,7 +139,7 @@ public class DynamicEndpointSnitch extends AbstractEndpointSnitch implements ILa
     public void sortByProximity(final InetAddress address, List<InetAddress> addresses)
     {
         assert address.equals(FBUtilities.getBroadcastAddress()); // we only know about ourself
-        if (BADNESS_THRESHOLD == 0)
+        if (BADNESS_THRESHOLD == 0 || !DatabaseDescriptor.getScoreStrategy().equals(SelectionStrategy.DEFAULT))
         {
             sortByProximityWithScore(address, addresses);
         }
@@ -174,19 +175,32 @@ public class DynamicEndpointSnitch extends AbstractEndpointSnitch implements ILa
         }
     }
 
-    public int compareEndpoints(InetAddress target, InetAddress a1, InetAddress a2)
-    {
-        Double scored1 = scores.get(a1);
-        Double scored2 = scores.get(a2);
-        
-        if (scored1 == null)
-        {
+    public int compareEndpoints(InetAddress target, InetAddress a1, InetAddress a2) {
+
+        Double scored1 = null;
+        Double scored2 = null;
+
+        switch (DatabaseDescriptor.getScoreStrategy()){
+            case ED:
+                scored1 = MessagingService.instance().getScore(a1);
+                scored2 = MessagingService.instance().getScore(a2);
+                break;
+            case BEST_QSZ:
+                break;
+            case POWER_OF_TWO_QSZ:
+                break;
+            case DEFAULT:
+                scored1 = scores.get(a1);
+                scored2 = scores.get(a2);
+                break;
+        }
+
+        if (scored1 == null) {
             scored1 = 0.0;
             receiveTiming(a1, 0);
         }
 
-        if (scored2 == null)
-        {
+        if (scored2 == null) {
             scored2 = 0.0;
             receiveTiming(a2, 0);
         }

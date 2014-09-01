@@ -20,6 +20,7 @@ package org.apache.cassandra.net;
 import java.io.*;
 import java.lang.management.ManagementFactory;
 import java.net.*;
+import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousCloseException;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.ServerSocketChannel;
@@ -35,7 +36,6 @@ import javax.management.ObjectName;
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
 import akka.actor.Props;
-import akka.io.Inet;
 import com.google.common.base.Function;
 import com.google.common.collect.Lists;
 import com.typesafe.config.Config;
@@ -748,16 +748,10 @@ public final class MessagingService implements MessagingServiceMBean
         return callbacks.get(messageId);
     }
 
-    public CallbackInfo removeRegisteredCallback(int messageId, InetAddress endpoint)
+    public CallbackInfo removeRegisteredCallback(int messageId)
     {
         CallbackInfo ret = callbacks.remove(messageId);
 
-        if (ret != null && (callbackDeserializers.get(Verb.READ).equals(ret.serializer))) {
-            receiveRateTick(endpoint);
-            updateRates(endpoint);
-            int count = pendingRequests.get(endpoint).decrementAndGet();
-            logger.trace("Decrementing pendingJob count Endpoint: {}, Count: {} ", endpoint, count);
-        }
 
         return ret;
     }
@@ -1062,14 +1056,6 @@ public final class MessagingService implements MessagingServiceMBean
         rateContainer.receiveRateTrackerTick();
     }
 
-    public void updateRates(final InetAddress endpoint) {
-        final SendReceiveRateContainer rateContainer = sendReceiveRateContainers.get(endpoint);
-
-        assert(rateContainer != null);
-
-        rateContainer.updateCubicSendingRate();
-    }
-
     public AtomicInteger getPendingRequestsCounter(final InetAddress endpoint) {
         AtomicInteger counter = MessagingService.instance().pendingRequests.get(FBUtilities.getBroadcastAddress());
         if(counter == null) {
@@ -1080,8 +1066,37 @@ public final class MessagingService implements MessagingServiceMBean
         return counter;
     }
 
+    public void updateMetrics(MessageIn message, CallbackInfo callbackInfo, long latency) {
+        if (callbackDeserializers.get(Verb.READ).equals(callbackInfo.serializer)) {
+            receiveRateTick(message.from);
+            final SendReceiveRateContainer rateContainer = sendReceiveRateContainers.get(message.from);
+            assert(rateContainer != null);
+            rateContainer.updateCubicSendingRate();
+            int count = pendingRequests.get(message.from).decrementAndGet();
+            logger.trace("Decrementing pendingJob count Endpoint: {}, Count: {} ", message.from, count);
+            rateContainer.updateNodeScore(
+                    ByteBuffer.wrap((byte[]) message.parameters.get(MacheteMetrics.QSZ)).getInt(),
+                    ByteBuffer.wrap((byte[]) message.parameters.get(MacheteMetrics.MU)).getLong(),
+                    latency
+            );
+        }
+    }
+
+    public double getScore(InetAddress endpoint) {
+        SendReceiveRateContainer rateContainer = sendReceiveRateContainers.get(endpoint);
+
+        if (rateContainer == null) {
+            sendReceiveRateContainers.putIfAbsent(endpoint, new SendReceiveRateContainer(endpoint));
+            rateContainer = sendReceiveRateContainers.get(endpoint);
+        }
+
+        assert(rateContainer != null);
+        return rateContainer.getScore();
+    }
+
     private class SendReceiveRateContainer {
-        private static final long RECEIVE_RATE_INTERVAL_MS = 20;
+        // Constants for send/receive rate tracking
+        private static final long RATE_INTERVAL_MS = 20;
         private static final long RECEIVE_RATE_INITIAL = 100;
 
         // Constants for cubic function
@@ -1090,22 +1105,28 @@ public final class MessagingService implements MessagingServiceMBean
         private static final double CUBIC_SMAX = 10;
         private static final double CUBIC_HYSTERISIS_FACTOR = 4;
         private static final double CUBIC_BETA_BY_C = CUBIC_BETA / CUBIC_C;
-        private static final double CUBIC_HYSTERISIS_DURATION = RECEIVE_RATE_INTERVAL_MS * CUBIC_HYSTERISIS_FACTOR;
+        private static final double CUBIC_HYSTERISIS_DURATION = RATE_INTERVAL_MS * CUBIC_HYSTERISIS_FACTOR;
 
         private final InetAddress endpoint;
         private final SimpleRateLimiter sendingRateLimiter;
         private final SlottedRateTracker receiveRateTracker;
 
+        // Cubic growth variables
         private long timeOfLastRateDecrease = 0L;
         private long timeOfLastRateIncrease = 0L;
         private double Rmax = 0;
 
-
+        // Cubic score for replica selection, updated on a per-request level
+        private static final double SCORE_EMA_ALPHA = 0.9;
+        private static final double ONE_MINUS_SCORE_EMA_ALPHA = 1 - SCORE_EMA_ALPHA;
+        private double emaQSZ = 0;
+        private double emaResponseTime = 0;
+        private double emaMu = 0;
 
         SendReceiveRateContainer(InetAddress endpoint) {
             this.endpoint = endpoint;
-            this.sendingRateLimiter = new SimpleRateLimiter(1, RECEIVE_RATE_INTERVAL_MS, 50);
-            this.receiveRateTracker = new SlottedRateTracker(RECEIVE_RATE_INITIAL, RECEIVE_RATE_INTERVAL_MS);
+            this.sendingRateLimiter = new SimpleRateLimiter(1, RATE_INTERVAL_MS, 50);
+            this.receiveRateTracker = new SlottedRateTracker(RECEIVE_RATE_INITIAL, RATE_INTERVAL_MS);
         }
 
         public double tryAcquire() {
@@ -1114,6 +1135,22 @@ public final class MessagingService implements MessagingServiceMBean
 
         public void receiveRateTrackerTick() {
             receiveRateTracker.add(1);
+        }
+
+        public synchronized void updateNodeScore(int feedbackQSZ,
+                                                 long feedbackMu,
+                                                 long feedbackResponseTime) {
+            emaQSZ = SCORE_EMA_ALPHA * feedbackQSZ  + ONE_MINUS_SCORE_EMA_ALPHA * emaQSZ;
+            emaMu = SCORE_EMA_ALPHA * feedbackMu  + ONE_MINUS_SCORE_EMA_ALPHA * emaMu;
+            emaResponseTime = SCORE_EMA_ALPHA * feedbackResponseTime  + ONE_MINUS_SCORE_EMA_ALPHA * emaResponseTime;
+        }
+
+        public synchronized double getScore() {
+            AtomicInteger counter = pendingRequests.get(endpoint);
+            if (counter == null) {
+                return 0.0;
+            }
+            return Math.pow(1 + emaQSZ + (pendingRequests.size()* counter.get()), 3) * emaMu;
         }
 
         public synchronized void updateCubicSendingRate() {

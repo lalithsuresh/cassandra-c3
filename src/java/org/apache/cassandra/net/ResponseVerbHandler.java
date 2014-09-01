@@ -17,7 +17,6 @@
  */
 package org.apache.cassandra.net;
 
-import java.nio.ByteBuffer;
 import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
@@ -32,7 +31,7 @@ public class ResponseVerbHandler implements IVerbHandler
     public void doVerb(MessageIn message, int id)
     {
         long latency = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - MessagingService.instance().getRegisteredCallbackAge(id));
-        CallbackInfo callbackInfo = MessagingService.instance().removeRegisteredCallback(id, message.from);
+        CallbackInfo callbackInfo = MessagingService.instance().removeRegisteredCallback(id);
         if (callbackInfo == null)
         {
             String msg = "Callback already removed for {} (from {})";
@@ -45,5 +44,6 @@ public class ResponseVerbHandler implements IVerbHandler
         IAsyncCallback cb = callbackInfo.callback;
         MessagingService.instance().maybeAddLatency(cb, message.from, latency);
         cb.response(message);
+        MessagingService.instance().updateMetrics(message, callbackInfo, latency);
     }
 }
