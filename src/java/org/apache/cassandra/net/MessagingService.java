@@ -1120,8 +1120,8 @@ public final class MessagingService implements MessagingServiceMBean
         private static final double SCORE_EMA_ALPHA = 0.9;
         private static final double ONE_MINUS_SCORE_EMA_ALPHA = 1 - SCORE_EMA_ALPHA;
         private double emaQSZ = 0;
-        private double emaResponseTime = 0;
         private double emaMu = 0;
+        private double emaNw = 0;
 
         SendReceiveRateContainer(InetAddress endpoint) {
             this.endpoint = endpoint;
@@ -1142,7 +1142,9 @@ public final class MessagingService implements MessagingServiceMBean
                                                  long feedbackResponseTime) {
             emaQSZ = SCORE_EMA_ALPHA * feedbackQSZ  + ONE_MINUS_SCORE_EMA_ALPHA * emaQSZ;
             emaMu = SCORE_EMA_ALPHA * feedbackMu  + ONE_MINUS_SCORE_EMA_ALPHA * emaMu;
-            emaResponseTime = SCORE_EMA_ALPHA * feedbackResponseTime  + ONE_MINUS_SCORE_EMA_ALPHA * emaResponseTime;
+            final double nwRtt = (feedbackResponseTime - feedbackMu);
+            emaNw = SCORE_EMA_ALPHA * nwRtt  + ONE_MINUS_SCORE_EMA_ALPHA * emaNw;
+            assert (feedbackMu < feedbackResponseTime);
         }
 
         public synchronized double getScore() {
@@ -1150,7 +1152,7 @@ public final class MessagingService implements MessagingServiceMBean
             if (counter == null) {
                 return 0.0;
             }
-            return Math.pow(1 + emaQSZ + (pendingRequests.size()* counter.get()), 3) * emaMu;
+            return emaNw + Math.pow(1 + emaQSZ + (pendingRequests.size()* counter.get()), 3) * emaMu;
         }
 
         public synchronized void updateCubicSendingRate() {

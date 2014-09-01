@@ -30,7 +30,7 @@ public class ResponseVerbHandler implements IVerbHandler
 
     public void doVerb(MessageIn message, int id)
     {
-        long latency = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - MessagingService.instance().getRegisteredCallbackAge(id));
+        long latency = System.nanoTime() - MessagingService.instance().getRegisteredCallbackAge(id);
         CallbackInfo callbackInfo = MessagingService.instance().removeRegisteredCallback(id);
         if (callbackInfo == null)
         {
@@ -42,7 +42,7 @@ public class ResponseVerbHandler implements IVerbHandler
 
         Tracing.trace("Processing response from {}", message.from);
         IAsyncCallback cb = callbackInfo.callback;
-        MessagingService.instance().maybeAddLatency(cb, message.from, latency);
+        MessagingService.instance().maybeAddLatency(cb, message.from, TimeUnit.NANOSECONDS.toMillis(latency));
         cb.response(message);
         MessagingService.instance().updateMetrics(message, callbackInfo, latency);
     }
