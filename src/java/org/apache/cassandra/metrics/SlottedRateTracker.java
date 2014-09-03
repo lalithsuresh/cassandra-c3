@@ -1,5 +1,9 @@
 package org.apache.cassandra.metrics;
 
+import org.apache.cassandra.service.StorageService;
+
+import java.util.concurrent.TimeUnit;
+
 /**
  * A rate tracker .
  */
@@ -19,6 +23,13 @@ public class SlottedRateTracker {
     public SlottedRateTracker(double initialRate, long interval) {
         this.currentRate = initialRate;
         this.interval = interval;
+//        Runnable tick = new Runnable() {
+//            public void run() {
+//                add(0);
+//            }
+//        };
+//
+//        StorageService.scheduledTasks.scheduleWithFixedDelay(tick, interval * 4, interval * 4, TimeUnit.MILLISECONDS);
     }
 
     public synchronized  double getCurrentRate() {
@@ -41,7 +52,7 @@ public class SlottedRateTracker {
      */
     public synchronized void add(long requests) {
         final long now = System.currentTimeMillis()/interval;
-        if (now - lastTick < interval) {
+        if (now - lastTick < 2) {
             eventCount += requests;
             if (now > lastTick) {
                 final double alpha = (now - lastTick)/(float) interval;

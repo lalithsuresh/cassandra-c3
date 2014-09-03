@@ -39,7 +39,6 @@ import org.apache.cassandra.exceptions.ReadTimeoutException;
 import org.apache.cassandra.exceptions.UnavailableException;
 import org.apache.cassandra.locator.SelectionStrategy;
 import org.apache.cassandra.metrics.ReadRepairMetrics;
-import org.apache.cassandra.metrics.TokenBucket;
 import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.service.StorageProxy.LocalReadRunnable;

@@ -1056,6 +1056,18 @@ public final class MessagingService implements MessagingServiceMBean
         rateContainer.receiveRateTrackerTick();
     }
 
+    public double getReceiveRate(InetAddress endpoint) {
+        SendReceiveRateContainer rateContainer = sendReceiveRateContainers.get(endpoint);
+
+        if (rateContainer == null) {
+            sendReceiveRateContainers.putIfAbsent(endpoint, new SendReceiveRateContainer(endpoint));
+            rateContainer = sendReceiveRateContainers.get(endpoint);
+        }
+
+        assert(rateContainer != null);
+        return rateContainer.getReceiveRate();
+    }
+
     public AtomicInteger getPendingRequestsCounter(final InetAddress endpoint) {
         AtomicInteger counter = MessagingService.instance().pendingRequests.get(FBUtilities.getBroadcastAddress());
         if(counter == null) {
@@ -1076,8 +1088,8 @@ public final class MessagingService implements MessagingServiceMBean
             logger.trace("Decrementing pendingJob count Endpoint: {}, Count: {} ", message.from, count);
             rateContainer.updateNodeScore(
                     ByteBuffer.wrap((byte[]) message.parameters.get(MacheteMetrics.QSZ)).getInt(),
-                    ByteBuffer.wrap((byte[]) message.parameters.get(MacheteMetrics.MU)).getLong(),
-                    latency
+                    ((double)ByteBuffer.wrap((byte[]) message.parameters.get(MacheteMetrics.MU)).getLong())/1000000.0,
+                    ((double) latency)/1000000.0
             );
         }
     }
@@ -1137,9 +1149,12 @@ public final class MessagingService implements MessagingServiceMBean
             receiveRateTracker.add(1);
         }
 
+        public double getReceiveRate() {
+            return receiveRateTracker.getCurrentRate();
+        }
         public synchronized void updateNodeScore(int feedbackQSZ,
-                                                 long feedbackMu,
-                                                 long feedbackResponseTime) {
+                                                 double feedbackMu,
+                                                 double feedbackResponseTime) {
             emaQSZ = SCORE_EMA_ALPHA * feedbackQSZ  + ONE_MINUS_SCORE_EMA_ALPHA * emaQSZ;
             emaMu = SCORE_EMA_ALPHA * feedbackMu  + ONE_MINUS_SCORE_EMA_ALPHA * emaMu;
             final double nwRtt = (feedbackResponseTime - feedbackMu);
