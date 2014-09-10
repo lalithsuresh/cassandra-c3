@@ -17,7 +17,8 @@ cluster_name: 'Test Cluster'
 # If you leave this unspecified, Cassandra will use the default of 1 token for legacy compatibility,
 # and will use the initial_token as described below.
 #
-# Specifying initial_token will override this setting.
+# Specifying initial_token will override this setting on the node's initial start,
+# on subsequent starts, this setting will apply even if initial token is set.
 #
 # If you already have a cluster with 1 token per node, and wish to migrate to 
 # multiple tokens per node, see http://wiki.apache.org/cassandra/Operations
@@ -336,7 +337,7 @@ rpc_address: localhost
 # port for Thrift to listen for clients on
 rpc_port: 9160
 
-# enable or disable keepalive on rpc connections
+# enable or disable keepalive on rpc/native connections
 rpc_keepalive: true
 
 # Cassandra provides two out-of-the-box options for the RPC Server:
@@ -420,14 +421,21 @@ auto_snapshot: true
 tombstone_warn_threshold: 1000
 tombstone_failure_threshold: 100000
 
-# Add column indexes to a row after its contents reach this size.
-# Increase if your column values are large, or if you have a very large
-# number of columns.  The competing causes are, Cassandra has to
-# deserialize this much of the row to read a single column, so you want
-# it to be small - at least if you do many partial-row reads - but all
-# the index data is read for each access, so you don't want to generate
-# that wastefully either.
+# Granularity of the collation index of rows within a partition.
+# Increase if your rows are large, or if you have a very large
+# number of rows per partition.  The competing goals are these:
+#   1) a smaller granularity means more index entries are generated
+#      and looking up rows withing the partition by collation column
+#      is faster
+#   2) but, Cassandra will keep the collation index in memory for hot
+#      rows (as part of the key cache), so a larger granularity means
+#      you can cache more hot rows
 column_index_size_in_kb: 64
+
+
+# Log WARN on any batch size exceeding this value. 5kb per batch by default.
+# Caution should be taken on increasing the size of this threshold as it can lead to node instability.
+batch_size_warn_threshold_in_kb: 5
 
 # Size limit for rows being compacted in memory.  Larger rows will spill
 # over to disk and use a slower two-pass compaction process.  A message
@@ -473,6 +481,12 @@ compaction_preheat_key_cache: true
 # can lead to saturating the network connection and degrading rpc performance.
 # When unset, the default is 200 Mbps or 25 MB/s.
 # stream_throughput_outbound_megabits_per_sec: 200
+
+# Throttles all streaming file transfer between the datacenters,
+# this setting allows users to throttle inter dc stream throughput in addition
+# to throttling all network stream traffic as configured with
+# stream_throughput_outbound_megabits_per_sec
+# inter_dc_stream_throughput_outbound_megabits_per_sec:
 
 # How long the coordinator should wait for read operations to complete
 read_request_timeout_in_ms: 5000

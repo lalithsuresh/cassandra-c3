@@ -243,6 +243,11 @@ public class SSTableWriter extends SSTable
         {
             RangeTombstone rangeTombstone = rangeTombstoneIterator.next();
             tombstones.update(rangeTombstone.getLocalDeletionTime());
+            minTimestamp = Math.min(minTimestamp, rangeTombstone.minTimestamp());
+            maxTimestamp = Math.max(maxTimestamp, rangeTombstone.maxTimestamp());
+
+            minColumnNames = ColumnNameHelper.minComponents(minColumnNames, rangeTombstone.min, metadata.comparator);
+            maxColumnNames = ColumnNameHelper.maxComponents(maxColumnNames, rangeTombstone.max, metadata.comparator);
         }
 
         Iterator<OnDiskAtom> iter = metadata.getOnDiskIterator(in, columnCount, ColumnSerializer.Flag.PRESERVE_SIZE, Integer.MIN_VALUE, version);

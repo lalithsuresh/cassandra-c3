@@ -37,6 +37,7 @@ import org.cliffc.high_scale_lib.NonBlockingHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.cache.KeyCacheKey;
 import org.apache.cassandra.cache.IRowCacheEntry;
 import org.apache.cassandra.cache.RowCacheKey;
 import org.apache.cassandra.cache.RowCacheSentinel;
@@ -290,12 +291,12 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         {
             throw new RuntimeException(e);
         }
+        logger.debug("retryPolicy for {} is {}", name, this.metadata.getSpeculativeRetry());
         StorageService.optionalTasks.scheduleWithFixedDelay(new Runnable()
         {
             public void run()
             {
                 SpeculativeRetry retryPolicy = ColumnFamilyStore.this.metadata.getSpeculativeRetry();
-                logger.debug("retryPolicy for {} is {}", name, retryPolicy.value);
                 switch (retryPolicy.type)
                 {
                     case PERCENTILE:
@@ -339,6 +340,11 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         for (RowCacheKey key : CacheService.instance.rowCache.getKeySet())
             if (key.cfId == metadata.cfId)
                 invalidateCachedRow(key);
+
+        String ksname = keyspace.getName();
+        for (KeyCacheKey key : CacheService.instance.keyCache.getKeySet())
+            if (key.getPathInfo().left.equals(ksname) && key.getPathInfo().right.equals(name))
+                CacheService.instance.keyCache.remove(key);
     }
 
     /**
@@ -434,7 +440,8 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         for (File dir : directories.getCFDirectories())
         {
             File[] lockfiles = dir.listFiles(filter);
-            if (lockfiles.length == 0)
+            // lock files can be null if I/O error happens
+            if (lockfiles == null || lockfiles.length == 0)
                 continue;
             logger.info("Removing SSTables from failed streaming session. Found {} files to cleanup.", lockfiles.length);
 
@@ -1696,7 +1703,15 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
 
     public List<Row> getRangeSlice(ExtendedFilter filter)
     {
-        return filter(getSequentialIterator(filter.dataRange, filter.timestamp), filter);
+        long start = System.nanoTime();
+        try
+        {
+            return filter(getSequentialIterator(filter.dataRange, filter.timestamp), filter);
+        }
+        finally
+        {
+            metric.rangeLatency.addNano(System.nanoTime() - start);
+        }
     }
 
     @VisibleForTesting
@@ -1987,7 +2002,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         // position in the System keyspace.
         logger.debug("truncating {}", name);
 
-        if (DatabaseDescriptor.isAutoSnapshot())
+        if (keyspace.metadata.durableWrites || DatabaseDescriptor.isAutoSnapshot())
         {
             // flush the CF being truncated before forcing the new segment
             forceBlockingFlush();
@@ -1996,21 +2011,21 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
             // that was part of the flushed we forced; otherwise on a tie, it won't get deleted.
             Uninterruptibles.sleepUninterruptibly(1, TimeUnit.MILLISECONDS);
         }
-
-        // nuke the memtable data w/o writing to disk first
-        Keyspace.switchLock.writeLock().lock();
-        try
+        else
         {
-            for (ColumnFamilyStore cfs : concatWithIndexes())
+            Keyspace.switchLock.writeLock().lock();
+            try
             {
-                Memtable mt = cfs.getMemtableThreadSafe();
-                if (!mt.isClean())
-                    mt.cfs.data.renewMemtable();
+                for (ColumnFamilyStore cfs : concatWithIndexes())
+                {
+                    Memtable mt = cfs.getMemtableThreadSafe();
+                    if (!mt.isClean())
+                        mt.cfs.data.renewMemtable();
+                }
+            } finally
+            {
+                Keyspace.switchLock.writeLock().unlock();
             }
-        }
-        finally
-        {
-            Keyspace.switchLock.writeLock().unlock();
         }
 
         Runnable truncateRunnable = new Runnable()
@@ -2251,12 +2266,12 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
 
     public double getTombstonesPerSlice()
     {
-        return metric.tombstoneScannedHistogram.getSnapshot().getMedian();
+        return metric.tombstoneScannedHistogram.cf.getSnapshot().getMedian();
     }
 
     public double getLiveCellsPerSlice()
     {
-        return metric.liveScannedHistogram.getSnapshot().getMedian();
+        return metric.liveScannedHistogram.cf.getSnapshot().getMedian();
     }
 
     // End JMX get/set.
@@ -2414,12 +2429,6 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
     public double getDroppableTombstoneRatio()
     {
         return getDataTracker().getDroppableTombstoneRatio();
-    }
-
-    public long getTruncationTime()
-    {
-        Pair<ReplayPosition, Long> truncationRecord = SystemKeyspace.getTruncationRecords().get(metadata.cfId);
-        return truncationRecord == null ? Long.MIN_VALUE : truncationRecord.right;
     }
 
     @VisibleForTesting

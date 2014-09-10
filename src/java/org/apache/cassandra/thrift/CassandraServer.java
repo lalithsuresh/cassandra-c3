@@ -911,7 +911,7 @@ public class CassandraServer implements Cassandra.Iface
             if (del.super_column == null && Schema.instance.getColumnFamilyType(rm.getKeyspaceName(), cfName) == ColumnFamilyType.Super)
                 rm.deleteRange(cfName,
                                SuperColumns.startOf(del.predicate.getSlice_range().start),
-                               SuperColumns.startOf(del.predicate.getSlice_range().finish),
+                               SuperColumns.endOf(del.predicate.getSlice_range().finish),
                                del.timestamp);
             else if (del.super_column != null)
                 rm.deleteRange(cfName,
@@ -1651,8 +1651,7 @@ public class CassandraServer implements Cassandra.Iface
             if (!oldCfm.isThriftCompatible())
                 throw new InvalidRequestException("Cannot modify CQL3 table " + oldCfm.cfName + " as it may break the schema. You should use cqlsh to modify CQL3 tables instead.");
 
-            CFMetaData.applyImplicitDefaults(cf_def);
-            CFMetaData cfm = CFMetaData.fromThrift(cf_def);
+            CFMetaData cfm = CFMetaData.fromThriftForUpdate(cf_def, oldCfm);
             CFMetaData.validateCompactionOptions(cfm.compactionStrategyClass, cfm.compactionStrategyOptions);
             cfm.addDefaultIndexNames();
 

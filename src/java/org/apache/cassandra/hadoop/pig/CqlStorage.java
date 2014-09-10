@@ -22,7 +22,6 @@ import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.util.*;
 
-
 import org.apache.cassandra.hadoop.HadoopCompat;
 import org.apache.cassandra.cql3.CFDefinition;
 import org.apache.cassandra.db.Column;
@@ -33,7 +32,6 @@ import org.apache.cassandra.hadoop.cql3.CqlConfigHelper;
 import org.apache.cassandra.thrift.*;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
-
 import org.apache.hadoop.mapreduce.*;
 import org.apache.pig.Expression;
 import org.apache.pig.Expression.OpType;
@@ -58,12 +56,12 @@ public class CqlStorage extends AbstractCassandraStorage
     private static final Logger logger = LoggerFactory.getLogger(CqlStorage.class);
 
     private RecordReader<Map<String, ByteBuffer>, Map<String, ByteBuffer>> reader;
-    private RecordWriter<Map<String, ByteBuffer>, List<ByteBuffer>> writer;
+    protected RecordWriter<Map<String, ByteBuffer>, List<ByteBuffer>> writer;
 
-    private int pageSize = 1000;
-    private String columns;
-    private String outputQuery;
-    private String whereClause;
+    protected int pageSize = 1000;
+    protected String columns;
+    protected String outputQuery;
+    protected String whereClause;
     private boolean hasCompactValueAlias = false;
         
     public CqlStorage()
@@ -130,7 +128,7 @@ public class CqlStorage extends AbstractCassandraStorage
     }
 
     /** set the value to the position of the tuple */
-    private void setTupleValue(Tuple tuple, int position, Object value, AbstractType<?> validator) throws ExecException
+    protected void setTupleValue(Tuple tuple, int position, Object value, AbstractType<?> validator) throws ExecException
     {
         if (validator instanceof CollectionType)
             setCollectionTupleValues(tuple, position, value, validator);
@@ -184,7 +182,7 @@ public class CqlStorage extends AbstractCassandraStorage
     }
 
     /** convert a cql column to an object */
-    private Object cqlColumnToObj(Column col, CfDef cfDef) throws IOException
+    protected Object cqlColumnToObj(Column col, CfDef cfDef) throws IOException
     {
         // standard
         Map<ByteBuffer,AbstractType> validators = getValidatorMap(cfDef);

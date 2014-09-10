@@ -198,17 +198,15 @@ public class SecondaryIndexManager
         if (clause == null || clause.isEmpty())
             return false;
 
-        // It doesn't seem a clause can have multiple searchers, but since
-        // getIndexSearchersForQuery returns a list ...
         List<SecondaryIndexSearcher> searchers = getIndexSearchersForQuery(clause);
         if (searchers.isEmpty())
             return false;
 
         for (SecondaryIndexSearcher searcher : searchers)
-            if (!searcher.isIndexing(clause))
-                return false;
+            if (searcher.isIndexing(clause))
+                return true;
 
-        return true;
+        return false;
     }
 
     /**
@@ -456,22 +454,19 @@ public class SecondaryIndexManager
 
         for (Column column : indexedColumnsInRow)
         {
-            ColumnDefinition cDef = baseCfs.metadata.getColumnDefinitionFromColumnName(column.name());
-            SecondaryIndex index = indexesByColumn.get(cDef.name);
-            if (index == null)
-                continue;
-
-            if (index instanceof PerRowSecondaryIndex)
+            for (SecondaryIndex index : indexFor(column.name()))
             {
-                if (cleanedRowLevelIndexes == null)
-                    cleanedRowLevelIndexes = new HashSet<>();
-
-                if (cleanedRowLevelIndexes.add(index.getClass()))
-                    ((PerRowSecondaryIndex)index).delete(key);
-            }
-            else
-            {
-                ((PerColumnSecondaryIndex) index).delete(key.key, column);
+                if (index instanceof PerRowSecondaryIndex)
+                {
+                    if (cleanedRowLevelIndexes == null)
+                        cleanedRowLevelIndexes = new HashSet<>();
+                    if (cleanedRowLevelIndexes.add(index.getClass()))
+                        ((PerRowSecondaryIndex) index).delete(key);
+                }
+                else
+                {
+                    ((PerColumnSecondaryIndex) index).delete(key.key, column);
+                }
             }
         }
     }
@@ -515,12 +510,12 @@ public class SecondaryIndexManager
             if (index == null)
                 continue;
 
-            Set<ByteBuffer> columns = groupByIndexType.get(index.getClass().getCanonicalName());
+            Set<ByteBuffer> columns = groupByIndexType.get(index.indexTypeForGrouping());
 
             if (columns == null)
             {
                 columns = new HashSet<>();
-                groupByIndexType.put(index.getClass().getCanonicalName(), columns);
+                groupByIndexType.put(index.indexTypeForGrouping(), columns);
             }
 
             columns.add(ix.column_name);
@@ -632,7 +627,14 @@ public class SecondaryIndexManager
                     // where the row is invisible to both queries (the opposite seems preferable); see CASSANDRA-5540
                     if (!column.isMarkedForDelete(System.currentTimeMillis()))
                         ((PerColumnSecondaryIndex) index).insert(key.key, column);
-                    ((PerColumnSecondaryIndex) index).delete(key.key, oldColumn);
+
+                    // Usually we want to delete the old value from the index, except when
+                    // name/value/timestamp are all equal, but the columns themselves
+                    // are not (as is the case when overwriting expiring columns with
+                    // identical values and ttl) Then, we don't want to delete as the
+                    // tombstone will hide the new value we just inserted; see CASSANDRA-7268
+                    if (shouldCleanupOldValue(oldColumn, column))
+                        ((PerColumnSecondaryIndex) index).delete(key.key, oldColumn);
                 }
             }
         }
@@ -651,6 +653,22 @@ public class SecondaryIndexManager
         {
             for (SecondaryIndex index : rowLevelIndexMap.values())
                 ((PerRowSecondaryIndex) index).index(key.key, cf);
+        }
+
+        private boolean shouldCleanupOldValue(Column oldColumn, Column newColumn)
+        {
+            // If any one of name/value/timestamp are different, then we
+            // should delete from the index. If not, then we can infer that
+            // at least one of the columns is an ExpiringColumn and that the
+            // difference is in the expiry time. In this case, we don't want to
+            // delete the old value from the index as the tombstone we insert
+            // will just hide the inserted value.
+            // Completely identical columns (including expiring columns with
+            // identical ttl & localExpirationTime) will not get this far due
+            // to the oldColumn.equals(newColumn) in StandardUpdater.update
+            return !oldColumn.name().equals(newColumn.name())
+                || !oldColumn.value().equals(newColumn.value())
+                || oldColumn.timestamp() != newColumn.timestamp();
         }
     }
 }

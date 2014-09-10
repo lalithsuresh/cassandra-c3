@@ -34,7 +34,6 @@ import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.LinkedHashMultimap;
 import com.google.common.collect.Maps;
 
-import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.commons.cli.*;
 import org.yaml.snakeyaml.Yaml;
@@ -54,6 +53,9 @@ import org.apache.cassandra.streaming.ProgressInfo;
 import org.apache.cassandra.streaming.SessionInfo;
 import org.apache.cassandra.utils.EstimatedHistogram;
 import org.apache.cassandra.utils.Pair;
+
+import static org.apache.commons.lang3.StringUtils.EMPTY;
+
 
 public class NodeCmd
 {
@@ -172,7 +174,6 @@ public class NodeCmd
         STATUSTHRIFT,
         STOP,
         STOPDAEMON,
-        TAKETOKEN,
         TPSTATS,
         TRUNCATEHINTS,
         UPGRADESSTABLES,
@@ -184,7 +185,10 @@ public class NodeCmd
         ENABLEBACKUP,
         DISABLEBACKUP,
         SETCACHEKEYSTOSAVE,
-        RELOADTRIGGERS
+        RELOADTRIGGERS,
+        SETLOGGINGLEVEL,
+        GETLOGGINGLEVELS,
+        SETHINTEDHANDOFFTHROTTLEKB
     }
 
 
@@ -245,12 +249,16 @@ public class NodeCmd
      * @param outs
      *            the stream to write to
      */
-    public void printRing(PrintStream outs, String keyspace)
+    public void printRing(PrintStream outs, String keyspace, boolean resolveIp)
     {
         Map<String, String> tokensToEndpoints = probe.getTokenToEndpointMap();
         LinkedHashMultimap<String, String> endpointsToTokens = LinkedHashMultimap.create();
+        boolean haveVnodes = false;
         for (Map.Entry<String, String> entry : tokensToEndpoints.entrySet())
+        {
+            haveVnodes |= endpointsToTokens.containsKey(entry.getValue());
             endpointsToTokens.put(entry.getValue(), entry.getKey());
+        }
 
         int maxAddressLength = Collections.max(endpointsToTokens.keys(), new Comparator<String>() {
             @Override
@@ -280,7 +288,7 @@ public class NodeCmd
         try
         {
             outs.println();
-            for (Entry<String, SetHostStat> entry : getOwnershipByDc(false, tokensToEndpoints, ownerships).entrySet())
+            for (Entry<String, SetHostStat> entry : getOwnershipByDc(resolveIp, tokensToEndpoints, ownerships).entrySet())
                 printDc(outs, format, entry.getKey(), endpointsToTokens, keyspaceSelected, entry.getValue());
         }
         catch (UnknownHostException e)
@@ -288,7 +296,7 @@ public class NodeCmd
             throw new RuntimeException(e);
         }
 
-        if(DatabaseDescriptor.getNumTokens() > 1)
+        if(haveVnodes)
         {
             outs.println("  Warning: \"nodetool ring\" is used to output all the tokens of a node.");
             outs.println("  To view status related info of a node use \"nodetool status\" instead.\n");
@@ -357,7 +365,7 @@ public class NodeCmd
                     ? loadMap.get(endpoint)
                     : "?";
             String owns = stat.owns != null ? new DecimalFormat("##0.00%").format(stat.owns) : "?";
-            outs.printf(format, endpoint, rack, status, state, load, owns, stat.token);
+            outs.printf(format, stat.ipOrDns(), rack, status, state, load, owns, stat.token);
         }
         outs.println();
     }
@@ -481,11 +489,11 @@ public class NodeCmd
                 outs.printf("Note: Ownership information does not include topology; for complete information, specify a keyspace%n");
             }
 
-            // More tokens then nodes (aka vnodes)?
-            if (tokensToEndpoints.values().size() < tokensToEndpoints.keySet().size())
-                isTokenPerNode = false;
-
             Map<String, SetHostStat> dcs = getOwnershipByDc(resolveIp, tokensToEndpoints, ownerships);
+
+            // More tokens than nodes (aka vnodes)?
+            if (dcs.values().size() < tokensToEndpoints.keySet().size())
+                isTokenPerNode = false;
 
             findMaxAddressLength(dcs);
 
@@ -1211,8 +1219,9 @@ public class NodeCmd
             switch (command)
             {
                 case RING :
-                    if (arguments.length > 0) { nodeCmd.printRing(System.out, arguments[0]); }
-                    else                      { nodeCmd.printRing(System.out, null); };
+                    boolean resolveIp = cmd.hasOption(RESOLVE_IP.left);
+                    if (arguments.length > 0) { nodeCmd.printRing(System.out, arguments[0], resolveIp); }
+                    else                      { nodeCmd.printRing(System.out, null, resolveIp); };
                     break;
 
                 case INFO            : nodeCmd.printInfo(System.out, cmd); break;
@@ -1245,6 +1254,11 @@ public class NodeCmd
                 case ENABLEBACKUP    : probe.setIncrementalBackupsEnabled(true); break;
                 case DISABLEBACKUP   : probe.setIncrementalBackupsEnabled(false); break;
 
+                case SETHINTEDHANDOFFTHROTTLEKB:
+                    if (arguments.length != 1) { badUse("Missing argument for hinted handoff throttle."); }
+                    probe.setHintedHandoffThrottleInKB(Integer.parseInt(arguments[0]));
+                    break;
+
                 case TRUNCATEHINTS:
                     if (arguments.length > 1) badUse("Too many arguments.");
                     else if (arguments.length == 1) probe.truncateHints(arguments[0]);
@@ -1252,7 +1266,7 @@ public class NodeCmd
                     break;
 
                 case STATUS :
-                    boolean resolveIp = cmd.hasOption(RESOLVE_IP.left);
+                    resolveIp = cmd.hasOption(RESOLVE_IP.left);
                     if (arguments.length > 0) nodeCmd.printClusterStatus(System.out, arguments[0], resolveIp);
                     else                      nodeCmd.printClusterStatus(System.out, null, resolveIp);
                     break;
@@ -1320,11 +1334,6 @@ public class NodeCmd
                 case SETTRACEPROBABILITY :
                     if (arguments.length != 1) { badUse("Missing value argument."); }
                     probe.setTraceProbability(Double.parseDouble(arguments[0]));
-                    break;
-
-                case TAKETOKEN:
-                    if (arguments.length < 1) { badUse("Must supply at least one token to take"); }
-                    probe.takeTokens(arguments);
                     break;
 
                 case REBUILD :
@@ -1413,11 +1422,8 @@ public class NodeCmd
                     break;
 
                 case REBUILD_INDEX:
-                    if (arguments.length < 2) { badUse("rebuild_index requires ks and cf args"); }
-                    if (arguments.length >= 3)
+                    if (arguments.length <= 2) { badUse("rebuild_index requires ks, cf and idx args"); }
                         probe.rebuildIndex(arguments[0], arguments[1], arguments[2].split(","));
-                    else
-                        probe.rebuildIndex(arguments[0], arguments[1]);
 
                     break;
 
@@ -1447,6 +1453,20 @@ public class NodeCmd
                     probe.reloadTriggers();
                     break;
 
+                case SETLOGGINGLEVEL:
+                    String classQualifer = EMPTY;
+                    String level = EMPTY;
+                    if (arguments.length >= 1)
+                        classQualifer = arguments[0];
+                    if (arguments.length == 2)
+                        level = arguments[1];
+                    probe.setLoggingLevel(classQualifer, level);
+                    break;
+
+                case GETLOGGINGLEVELS :
+                    nodeCmd.getLoggingLevels(System.out);
+                    break;
+
                 default :
                     throw new RuntimeException("Unreachable code.");
             }
@@ -1466,6 +1486,14 @@ public class NodeCmd
             }
         }
         System.exit(probe.isFailed() ? 1 : 0);
+    }
+
+    private void getLoggingLevels(PrintStream out)
+    {
+        // what if some one set a very long logger name? 50 space may not be enough...
+        System.out.printf("%n%-50s%10s%n", "Logger Name", "Log Level");
+        for (Map.Entry<String, String> entry : this.probe.getLoggingLevels().entrySet())
+            System.out.printf("%-50s%10s%n", entry.getKey(), entry.getValue());
     }
 
     private void printCompactionHistory(PrintStream out)
@@ -1506,7 +1534,7 @@ public class NodeCmd
             SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss,SSS");
             writer.append(sdf.format(new Date()) + ": " + cmdLine + "\n");
         }
-        catch (IOException ioe)
+        catch (IOException | IOError ioe)
         {
             //quietly ignore any errors about not being able to write out history
         }
@@ -1633,6 +1661,9 @@ public class NodeCmd
                     boolean primaryRange = cmd.hasOption(PRIMARY_RANGE_OPT.left);
                     Collection<String> dataCenters = null;
                     Collection<String> hosts = null;
+
+                    if (primaryRange && (localDC || specificDC || specificHosts))
+                        throw new RuntimeException("Primary range repair should be performed on all nodes in the cluster.");
 
                     if (specificDC)
                         dataCenters = Arrays.asList(cmd.getOptionValue(DC_REPAIR_OPT.left).split(","));

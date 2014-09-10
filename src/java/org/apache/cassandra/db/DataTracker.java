@@ -109,7 +109,7 @@ public class DataTracker
     public Memtable switchMemtable()
     {
         // atomically change the current memtable
-        Memtable newMemtable = new Memtable(cfstore, view.get().memtable);
+        Memtable newMemtable = new Memtable(cfstore);
         Memtable toFlushMemtable;
         View currentView, newView;
         do
@@ -130,7 +130,9 @@ public class DataTracker
      */
     public void renewMemtable()
     {
-        Memtable newMemtable = new Memtable(cfstore, view.get().memtable);
+        assert !cfstore.keyspace.metadata.durableWrites;
+
+        Memtable newMemtable = new Memtable(cfstore);
         View currentView, newView;
         do
         {
@@ -321,7 +323,7 @@ public class DataTracker
     /** (Re)initializes the tracker, purging all references. */
     void init()
     {
-        view.set(new View(new Memtable(cfstore, null),
+        view.set(new View(new Memtable(cfstore),
                           Collections.<Memtable>emptySet(),
                           Collections.<SSTableReader>emptySet(),
                           Collections.<SSTableReader>emptySet(),

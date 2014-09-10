@@ -44,12 +44,12 @@ import org.apache.cassandra.utils.FBUtilities;
  */
 public class FailureDetector implements IFailureDetector, FailureDetectorMBean
 {
+    private static final Logger logger = LoggerFactory.getLogger(FailureDetector.class);
     public static final String MBEAN_NAME = "org.apache.cassandra.net:type=FailureDetector";
     private static final int SAMPLE_SIZE = 1000;
     protected static final long INITIAL_VALUE_NANOS = TimeUnit.NANOSECONDS.convert(getInitialValue(), TimeUnit.MILLISECONDS);
 
     public static final IFailureDetector instance = new FailureDetector();
-    private static final Logger logger = LoggerFactory.getLogger(FailureDetector.class);
 
     // this is useless except to provide backwards compatibility in phi_convict_threshold,
     // because everyone seems pretty accustomed to the default of 8, and users who have
@@ -77,13 +77,15 @@ public class FailureDetector implements IFailureDetector, FailureDetectorMBean
     private static long getInitialValue()
     {
         String newvalue = System.getProperty("cassandra.fd_initial_value_ms");
-        if (newvalue != null)
+        if (newvalue == null)
+        {
+            return Gossiper.intervalInMillis * 2;
+        }
+        else
         {
             logger.info("Overriding FD INITIAL_VALUE to {}ms", newvalue);
             return Integer.parseInt(newvalue);
         }
-        else
-            return Gossiper.intervalInMillis * 30;
     }
 
     public String getAllEndpointStates()
@@ -142,6 +144,8 @@ public class FailureDetector implements IFailureDetector, FailureDetectorMBean
 
     private void appendEndpointState(StringBuilder sb, EndpointState endpointState)
     {
+        sb.append("  generation:").append(endpointState.getHeartBeatState().getGeneration()).append("\n");
+        sb.append("  heartbeat:").append(endpointState.getHeartBeatState().getHeartBeatVersion()).append("\n");
         for (Map.Entry<ApplicationState, VersionedValue> state : endpointState.applicationState.entrySet())
         {
             if (state.getKey() == ApplicationState.TOKENS)
@@ -311,13 +315,15 @@ class ArrivalWindow
     private static long getMaxInterval()
     {
         String newvalue = System.getProperty("cassandra.fd_max_interval_ms");
-        if (newvalue != null)
+        if (newvalue == null)
+        {
+            return FailureDetector.INITIAL_VALUE_NANOS;
+        }
+        else
         {
             logger.info("Overriding FD MAX_INTERVAL to {}ms", newvalue);
             return TimeUnit.NANOSECONDS.convert(Integer.parseInt(newvalue), TimeUnit.MILLISECONDS);
         }
-        else
-            return FailureDetector.INITIAL_VALUE_NANOS;
     }
 
     synchronized void add(long value)

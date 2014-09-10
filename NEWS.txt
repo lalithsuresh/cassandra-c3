@@ -13,6 +13,48 @@ restore snapshots created with the previous major version using the
 'sstableloader' tool. You can upgrade the file format of your snapshots
 using the provided 'sstableupgrade' tool.
 
+2.0.10
+======
+New features
+------------
+    - CqlPaginRecordReader and CqlPagingInputFormat have both been removed.
+      Use CqlInputFormat instead.
+    - If you are using Leveled Compaction, you can now disable doing size-tiered
+      compaction in L0 by starting Cassandra with -Dcassandra.disable_stcs_in_l0
+      (see CASSANDRA-6621 for details).
+    - Shuffle and taketoken have been removed.  For clusters that choose to
+      upgrade to vnodes, creating a new datacenter with vnodes and migrating is
+      recommended. See http://goo.gl/Sna2S1 for further information.
+
+
+2.0.9
+=====
+
+Upgrading
+---------
+    - Default values for read_repair_chance and local_read_repair_chance have been
+      swapped. Namely, default read_repair_chance is now set to 0.0, and default
+      local_read_repair_chance to 0.1.
+    - Queries selecting only CQL static columns were (mistakenly) not returning one
+      result per row in the partition. This has been fixed and a SELECT DISTINCT
+      can be used when only the static column of a partition needs to be fetch
+      without fetching the whole partition. But if you use static columns, please
+      make sure this won't affect you (see CASSANDRA-7305 for details).
+
+
+2.0.8
+=====
+
+New features
+------------
+    - New snitches have been used for users of Google Compute Engine and of
+      Cloudstack.
+
+Upgrading
+---------
+    - Nothing specific to this release, but please see 2.0.7 if you are upgrading
+      from a previous version.
+
 
 2.0.7
 =====

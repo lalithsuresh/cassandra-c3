@@ -120,19 +120,11 @@ public class Memtable
     // memtable was created with the new or old comparator.
     public final AbstractType initialComparator;
 
-    public Memtable(ColumnFamilyStore cfs, Memtable previous)
+    public Memtable(ColumnFamilyStore cfs)
     {
         this.cfs = cfs;
         this.initialComparator = cfs.metadata.comparator;
         this.cfs.scheduleFlush();
-
-        // Inherit liveRatio and liveRatioCompareAt from the previous memtable, if available,
-        // to minimise recalculation frequency as much as possible.
-        if (previous != null)
-        {
-            liveRatio = previous.liveRatio;
-            liveRatioComputedAt.set(previous.liveRatioComputedAt.get() / 4);
-        }
 
         Callable<Set<Object>> provider = new Callable<Set<Object>>()
         {
@@ -175,12 +167,12 @@ public class Memtable
 
     public void maybeUpdateLiveRatio()
     {
-        // recompute liveRatio, if we have doubled the number of ops since last calculated
+        // recompute liveRatio, if we have increased the number of ops 10x since last calculated
         while (true)
         {
             long last = liveRatioComputedAt.get();
             long operations = currentOperations.get();
-            if (operations < 2 * last)
+            if (operations <= 10L * last)
                 break;
             if (liveRatioComputedAt.compareAndSet(last, operations))
             {
@@ -467,7 +459,7 @@ public class Memtable
                 }
                 if (newRatio > MAX_SANE_LIVE_RATIO)
                 {
-                    logger.warn("setting live ratio to maximum of {} instead of {}", MAX_SANE_LIVE_RATIO, newRatio);
+                    logger.debug("setting live ratio to maximum of {} instead of {}", MAX_SANE_LIVE_RATIO, newRatio);
                     newRatio = MAX_SANE_LIVE_RATIO;
                 }
 
@@ -478,8 +470,8 @@ public class Memtable
                 else
                     memtable.liveRatio = (memtable.liveRatio + newRatio) / 2.0;
 
-                logger.info("{} liveRatio is {} (just-counted was {}).  calculation took {}ms for {} cells",
-                            cfs, memtable.liveRatio, newRatio, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start), objects);
+                logger.debug("{} liveRatio is {} (just-counted was {}).  calculation took {}ms for {} cells",
+                             cfs, memtable.liveRatio, newRatio, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start), objects);
             }
             finally
             {

@@ -32,14 +32,11 @@ import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.cql3.*;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.filter.ColumnSlice;
-import org.apache.cassandra.db.filter.IDiskAtomFilter;
 import org.apache.cassandra.db.filter.SliceQueryFilter;
 import org.apache.cassandra.db.marshal.CompositeType;
 import org.apache.cassandra.db.marshal.UTF8Type;
-import org.apache.cassandra.db.marshal.ListType;
 import org.apache.cassandra.db.marshal.BooleanType;
 import org.apache.cassandra.exceptions.*;
-import org.apache.cassandra.service.CASConditions;
 import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.service.StorageProxy;
@@ -154,8 +151,14 @@ public abstract class ModificationStatement implements CQLStatement, MeasurableF
 
     public void validate(ClientState state) throws InvalidRequestException
     {
-        if (hasConditions() && attrs.isTimestampSet())
-            throw new InvalidRequestException("Custom timestamps are not allowed when conditions are used");
+        if (hasConditions())
+        {
+            if (attrs.isTimestampSet())
+                throw new InvalidRequestException("Cannot provide custom timestamp for conditional update");
+
+            if (requiresRead())
+                throw new InvalidRequestException("Operations on lists requiring a read (setting by index and deletions by index or value) are not allowed with IF conditions");
+        }
 
         if (isCounter())
         {
@@ -250,14 +253,21 @@ public abstract class ModificationStatement implements CQLStatement, MeasurableF
 
     public void addKeyValue(CFDefinition.Name name, Term value) throws InvalidRequestException
     {
-        addKeyValues(name, new Restriction.EQ(value, false));
+        addKeyValues(name, new SingleColumnRestriction.EQ(value, false));
     }
 
     public void processWhereClause(List<Relation> whereClause, VariableSpecifications names) throws InvalidRequestException
     {
         CFDefinition cfDef = cfm.getCfDef();
-        for (Relation rel : whereClause)
+        for (Relation relation : whereClause)
         {
+            if (!(relation instanceof SingleColumnRelation))
+            {
+                throw new InvalidRequestException(
+                        String.format("Multi-column relations cannot be used in WHERE clauses for modification statements: %s", relation));
+            }
+            SingleColumnRelation rel = (SingleColumnRelation) relation;
+
             CFDefinition.Name name = cfDef.get(rel.getEntity());
             if (name == null)
                 throw new InvalidRequestException(String.format("Unknown key identifier %s", rel.getEntity()));
@@ -272,7 +282,7 @@ public abstract class ModificationStatement implements CQLStatement, MeasurableF
                     {
                         Term t = rel.getValue().prepare(name);
                         t.collectMarkerSpecification(names);
-                        restriction = new Restriction.EQ(t, false);
+                        restriction = new SingleColumnRestriction.EQ(t, false);
                     }
                     else if (name.kind == CFDefinition.Name.Kind.KEY_ALIAS && rel.operator() == Relation.Type.IN)
                     {
@@ -280,7 +290,7 @@ public abstract class ModificationStatement implements CQLStatement, MeasurableF
                         {
                             Term t = rel.getValue().prepare(name);
                             t.collectMarkerSpecification(names);
-                            restriction = Restriction.IN.create(t);
+                            restriction = new SingleColumnRestriction.InWithMarker((Lists.Marker)t);
                         }
                         else
                         {
@@ -291,7 +301,7 @@ public abstract class ModificationStatement implements CQLStatement, MeasurableF
                                 t.collectMarkerSpecification(names);
                                 values.add(t);
                             }
-                            restriction = Restriction.IN.create(values);
+                            restriction = new SingleColumnRestriction.InWithValues(values);
                         }
                     }
                     else
@@ -433,6 +443,14 @@ public abstract class ModificationStatement implements CQLStatement, MeasurableF
                 return name;
         }
         return null;
+    }
+
+    public boolean requiresRead()
+    {
+        for (Operation op : columnOperations)
+            if (op.requiresRead())
+                return true;
+        return false;
     }
 
     protected Map<ByteBuffer, ColumnGroupMap> readRequiredRows(Collection<ByteBuffer> partitionKeys, ColumnNameBuilder clusteringPrefix, boolean local, ConsistencyLevel cl)
@@ -649,7 +667,9 @@ public abstract class ModificationStatement implements CQLStatement, MeasurableF
         }
         else
         {
-            List<CFDefinition.Name> names = new ArrayList<CFDefinition.Name>();
+            // We can have multiple conditions on the same columns (for collections) so use a set
+            // to avoid duplicate, but preserve the order just to it follows the order of IF in the query in general
+            Set<CFDefinition.Name> names = new LinkedHashSet<CFDefinition.Name>();
             // Adding the partition key for batches to disambiguate if the conditions span multipe rows (we don't add them outside
             // of batches for compatibility sakes).
             if (isBatch)
@@ -669,12 +689,13 @@ public abstract class ModificationStatement implements CQLStatement, MeasurableF
         return builder.build();
     }
 
-    public ResultMessage executeInternal(QueryState queryState) throws RequestValidationException, RequestExecutionException
+    public ResultMessage executeInternal(QueryState queryState, QueryOptions options) throws RequestValidationException, RequestExecutionException
     {
         if (hasConditions())
             throw new UnsupportedOperationException();
 
-        for (IMutation mutation : getMutations(Collections.<ByteBuffer>emptyList(), true, null, queryState.getTimestamp()))
+        List<ByteBuffer> variables = options.getValues();
+        for (IMutation mutation : getMutations(variables, true, null, queryState.getTimestamp()))
             mutation.apply();
         return null;
     }
@@ -764,9 +785,6 @@ public abstract class ModificationStatement implements CQLStatement, MeasurableF
             {
                 if (stmt.isCounter())
                     throw new InvalidRequestException("Conditional updates are not supported on counter tables");
-
-                if (attrs.timestamp != null)
-                    throw new InvalidRequestException("Cannot provide custom timestamp for conditional update");
 
                 if (ifNotExists)
                 {

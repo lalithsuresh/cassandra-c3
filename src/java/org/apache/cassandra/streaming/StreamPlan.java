@@ -38,6 +38,8 @@ public class StreamPlan
     // sessions per InetAddress of the other end.
     private final Map<InetAddress, StreamSession> sessions = new HashMap<>();
 
+    private StreamConnectionFactory connectionFactory = new DefaultConnectionFactory();
+
     private boolean flushBeforeTransfer = true;
 
     /**
@@ -112,7 +114,8 @@ public class StreamPlan
      * Add transfer task to send given SSTable files.
      *
      * @param to endpoint address of receiver
-     * @param sstableDetails sstables with file positions and estimated key count
+     * @param sstableDetails sstables with file positions and estimated key count.
+     *                       this collection will be modified to remove those files that are successfully handed off
      * @return this object for chaining
      */
     public StreamPlan transferFiles(InetAddress to, Collection<StreamSession.SSTableStreamingSections> sstableDetails)
@@ -127,6 +130,18 @@ public class StreamPlan
         this.handlers.add(handler);
         if (handlers != null)
             Collections.addAll(this.handlers, handlers);
+        return this;
+    }
+
+    /**
+     * Set custom StreamConnectionFactory to be used for establishing connection
+     *
+     * @param factory StreamConnectionFactory to use
+     * @return self
+     */
+    public StreamPlan connectionFactory(StreamConnectionFactory factory)
+    {
+        this.connectionFactory = factory;
         return this;
     }
 
@@ -166,7 +181,7 @@ public class StreamPlan
         StreamSession session = sessions.get(peer);
         if (session == null)
         {
-            session = new StreamSession(peer);
+            session = new StreamSession(peer, connectionFactory);
             sessions.put(peer, session);
         }
         return session;

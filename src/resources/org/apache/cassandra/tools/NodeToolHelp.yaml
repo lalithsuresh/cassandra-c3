@@ -115,9 +115,6 @@ commands:
   - name: move <new token>
     help: |
       Move node on the token ring to a new token. (for negative tokens, use \\ to escape, Example: move \\-123)
-  - name: taketoken <token, ...>
-    help: |
-      Move the token(s) from the existing owner(s) to this node.  For vnodes only.  Use \\ to escape negative tokens.
   - name: removenode status|force|<ID>
     help: |
       Show status of current node removal, force completion of pending removal or remove provided ID
@@ -204,7 +201,7 @@ commands:
       Load newly placed SSTables to the system without restart.
   - name: rebuild_index <keyspace> <cf-name> <idx1,idx1>
     help: |
-      a full rebuilds of native secondry index for a given column family. IndexNameExample: Standard3.IdxName,Standard3.IdxName1
+      a full rebuild of native secondary indexes for a given column family. IndexNameExample: Standard3.IdxName,Standard3.IdxName1
   - name: setcachecapacity <key-cache-capacity> <row-cache-capacity>
     help: |
       Set global key and row cache capacities (in MB units).
@@ -220,3 +217,12 @@ commands:
   - name: reloadtriggers
     help: |
       reload trigger classes
+  - name: setlogginglevel <class> <level>
+    help: |
+      Set the log level threshold for a given class. If both class and level are empty/null, it will reset to the initial configuration
+  - name: getlogginglevels
+    help: |
+      Get the runtime logging levels
+  - name: sethintedhandoffthrottlekb  <throttle-in-kb>
+    help: |
+      Set hinted handoff throttle in kb per second, per delivery thread.

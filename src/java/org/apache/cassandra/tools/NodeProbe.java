@@ -65,7 +65,7 @@ import org.apache.cassandra.utils.SimpleCondition;
  */
 public class NodeProbe
 {
-    private static final String fmtUrl = "service:jmx:rmi:///jndi/rmi://%s:%d/jmxrmi";
+    private static final String fmtUrl = "service:jmx:rmi:///jndi/rmi://[%s]:%d/jmxrmi";
     private static final String ssObjName = "org.apache.cassandra.db:type=StorageService";
     private static final int defaultPort = 7199;
     final String host;
@@ -471,11 +471,6 @@ public class NodeProbe
         ssProxy.move(newToken);
     }
 
-    public void takeTokens(String[] tokens) throws IOException
-    {
-        ssProxy.relocate(Arrays.asList(tokens));
-    }
-
     public void removeNode(String token)
     {
         ssProxy.removeNode(token);
@@ -532,6 +527,11 @@ public class NodeProbe
     public void setIncrementalBackupsEnabled(boolean enabled)
     {
         ssProxy.setIncrementalBackupsEnabled(enabled);
+    }
+
+    public void setHintedHandoffThrottleInKB(int throttleInKb)
+    {
+        ssProxy.setHintedHandoffThrottleInKB(throttleInKb);
     }
 
     public void setCacheCapacities(int keyCacheCapacity, int rowCacheCapacity)
@@ -915,6 +915,16 @@ public class NodeProbe
     public void reloadTriggers()
     {
         spProxy.reloadTriggerClasses();
+    }
+
+    public void setLoggingLevel(String classQualifier, String level)
+    {
+        ssProxy.setLog4jLevel(classQualifier, level);
+    }
+
+    public Map<String, String> getLoggingLevels()
+    {
+         return ssProxy.getLoggingLevels();
     }
 }
 

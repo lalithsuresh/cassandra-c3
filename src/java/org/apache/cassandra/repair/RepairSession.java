@@ -73,7 +73,9 @@ import org.apache.cassandra.utils.*;
  * Similarly, if a job is sequential, it will handle one Differencer at a time, but will handle
  * all of them in parallel otherwise.
  */
-public class RepairSession extends WrappedRunnable implements IEndpointStateChangeSubscriber, IFailureDetectionEventListener
+public class RepairSession extends WrappedRunnable implements IEndpointStateChangeSubscriber,
+                                                              IFailureDetectionEventListener,
+                                                              IRepairJobEventListener
 {
     private static Logger logger = LoggerFactory.getLogger(RepairSession.class);
 
@@ -268,7 +270,7 @@ public class RepairSession extends WrappedRunnable implements IEndpointStateChan
             // Create and queue a RepairJob for each column family
             for (String cfname : cfnames)
             {
-                RepairJob job = new RepairJob(id, keyspace, cfname, range, isSequential, taskExecutor);
+                RepairJob job = new RepairJob(this, id, keyspace, cfname, range, isSequential, taskExecutor);
                 jobs.offer(job);
             }
 
@@ -316,6 +318,12 @@ public class RepairSession extends WrappedRunnable implements IEndpointStateChan
         completed.signalAll();
     }
 
+    public void failedSnapshot()
+    {
+        exception = new IOException("Failed during snapshot creation.");
+        forceShutdown();
+    }
+
     void failedNode(InetAddress remote)
     {
         String errorMsg = String.format("Endpoint %s died", remote);
@@ -345,8 +353,8 @@ public class RepairSession extends WrappedRunnable implements IEndpointStateChan
         if (!endpoints.contains(endpoint))
             return;
 
-        // We want a higher confidence in the failure detection than usual because failing a repair wrongly has a high cost.
-        if (phi < 2 * DatabaseDescriptor.getPhiConvictThreshold())
+        // We want a higher confidence in the failure detection than usual because failing a repair wrongly has a high cost (CASSANDRA-7063)
+        if (phi < 100 * DatabaseDescriptor.getPhiConvictThreshold())
             return;
 
         // Though unlikely, it is possible to arrive here multiple time and we

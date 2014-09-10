@@ -51,6 +51,8 @@ public class CreateTableStatement extends SchemaAlteringStatement
     private final List<ByteBuffer> columnAliases = new ArrayList<ByteBuffer>();
     private ByteBuffer valueAlias;
 
+    private boolean isDense;
+
     private final Map<ColumnIdentifier, AbstractType> columns = new HashMap<ColumnIdentifier, AbstractType>();
     private final Set<ColumnIdentifier> staticColumns;
     private final CFPropDefs properties;
@@ -112,16 +114,18 @@ public class CreateTableStatement extends SchemaAlteringStatement
         return columnDefs;
     }
 
-    public void announceMigration() throws RequestValidationException
+    public boolean announceMigration() throws RequestValidationException
     {
         try
         {
-           MigrationManager.announceNewColumnFamily(getCFMetaData());
+            MigrationManager.announceNewColumnFamily(getCFMetaData());
+            return true;
         }
         catch (AlreadyExistsException e)
         {
-            if (!ifNotExists)
-                throw e;
+            if (ifNotExists)
+                return false;
+            throw e;
         }
     }
 
@@ -153,7 +157,8 @@ public class CreateTableStatement extends SchemaAlteringStatement
     {
         cfmd.defaultValidator(defaultValidator)
             .keyValidator(keyValidator)
-            .columnMetadata(getColumns());
+            .columnMetadata(getColumns())
+            .setDense(isDense);
 
         cfmd.addColumnMetadataFromAliases(keyAliases, keyValidator, ColumnDefinition.Type.PARTITION_KEY);
         cfmd.addColumnMetadataFromAliases(columnAliases, comparator, ColumnDefinition.Type.CLUSTERING_KEY);
@@ -237,6 +242,10 @@ public class CreateTableStatement extends SchemaAlteringStatement
             }
             stmt.keyValidator = keyTypes.size() == 1 ? keyTypes.get(0) : CompositeType.getInstance(keyTypes);
 
+            // Dense means that no part of the comparator stores a CQL column name. This means
+            // COMPACT STORAGE with at least one columnAliases (otherwise it's a thrift "static" CF).
+            stmt.isDense = useCompactStorage && !columnAliases.isEmpty();
+
             // Handle column aliases
             if (columnAliases.isEmpty())
             {
@@ -285,7 +294,7 @@ public class CreateTableStatement extends SchemaAlteringStatement
 
                         AbstractType<?> type = getTypeAndRemove(stmt.columns, t);
                         if (type instanceof CounterColumnType)
-                            throw new InvalidRequestException(String.format("counter type is not supported for PRIMARY KEY part %s", t.key));
+                            throw new InvalidRequestException(String.format("counter type is not supported for PRIMARY KEY part %s", t));
                         if (staticColumns.contains(t))
                             throw new InvalidRequestException(String.format("Static column %s cannot be part of the PRIMARY KEY", t));
                         types.add(type);

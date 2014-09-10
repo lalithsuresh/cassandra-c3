@@ -103,6 +103,8 @@ public abstract class Message
 
         public static Type fromOpcode(int opcode, Direction direction)
         {
+            if (opcode >= opcodeIdx.length)
+                throw new ProtocolException(String.format("Unknown opcode %d", opcode));
             Type t = opcodeIdx[opcode];
             if (t == null)
                 throw new ProtocolException(String.format("Unknown opcode %d", opcode));
@@ -310,7 +312,7 @@ public abstract class Message
 
                 ctx.getChannel().write(response);
             }
-            catch (Exception ex)
+            catch (Throwable ex)
             {
                 // Don't let the exception propagate to exceptionCaught() if we can help it so that we can assign the right streamID.
                 ctx.getChannel().write(ErrorMessage.fromException(ex).setStreamId(request.getStreamId()));

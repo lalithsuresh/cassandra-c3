@@ -19,13 +19,12 @@ package org.apache.cassandra.streaming;
 
 import java.io.IOException;
 import java.net.InetAddress;
+import java.net.Socket;
 import java.util.*;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-import com.google.common.collect.Iterables;
-import com.google.common.collect.Lists;
-import org.apache.cassandra.io.sstable.SSTableWriter;
+import com.google.common.collect.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -124,16 +123,20 @@ public class StreamSession implements IEndpointStateChangeSubscriber, IFailureDe
     private StreamResultFuture streamResult;
 
     // stream requests to send to the peer
-    private final List<StreamRequest> requests = new ArrayList<>();
+    private final Set<StreamRequest> requests = Sets.newConcurrentHashSet();
     // streaming tasks are created and managed per ColumnFamily ID
-    private final Map<UUID, StreamTransferTask> transfers = new HashMap<>();
+    private final Map<UUID, StreamTransferTask> transfers = new ConcurrentHashMap<>();
     // data receivers, filled after receiving prepare message
-    private final Map<UUID, StreamReceiveTask> receivers = new HashMap<>();
+    private final Map<UUID, StreamReceiveTask> receivers = new ConcurrentHashMap<>();
     private final StreamingMetrics metrics;
+    /* can be null when session is created in remote */
+    private final StreamConnectionFactory factory;
 
     public final ConnectionHandler handler;
 
     private int retries;
+
+    private AtomicBoolean isAborted = new AtomicBoolean(false);
 
     public static enum State
     {
@@ -152,10 +155,12 @@ public class StreamSession implements IEndpointStateChangeSubscriber, IFailureDe
      * Create new streaming session with the peer.
      *
      * @param peer Address of streaming peer
+     * @param factory is used for establishing connection
      */
-    public StreamSession(InetAddress peer)
+    public StreamSession(InetAddress peer, StreamConnectionFactory factory)
     {
         this.peer = peer;
+        this.factory = factory;
         this.handler = new ConnectionHandler(this);
         this.metrics = StreamingMetrics.get(peer);
     }
@@ -211,6 +216,12 @@ public class StreamSession implements IEndpointStateChangeSubscriber, IFailureDe
         });
     }
 
+    public Socket createConnection() throws IOException
+    {
+        assert factory != null;
+        return factory.createConnection(peer);
+    }
+
     /**
      * Request data fetch task to this session.
      *
@@ -248,42 +259,61 @@ public class StreamSession implements IEndpointStateChangeSubscriber, IFailureDe
             flushSSTables(stores);
 
         List<Range<Token>> normalizedRanges = Range.normalize(ranges);
-        List<SSTableReader> sstables = Lists.newLinkedList();
-        for (ColumnFamilyStore cfStore : stores)
+        List<SSTableStreamingSections> sections = getSSTableSectionsForRanges(normalizedRanges, stores);
+        try
         {
-            List<AbstractBounds<RowPosition>> rowBoundsList = Lists.newLinkedList();
-            for (Range<Token> range : normalizedRanges)
-                rowBoundsList.add(range.toRowBounds());
-            ColumnFamilyStore.ViewFragment view = cfStore.markReferenced(rowBoundsList);
-            sstables.addAll(view.sstables);
+            addTransferFiles(sections);
         }
-        addTransferFiles(normalizedRanges, sstables);
+        finally
+        {
+            for (SSTableStreamingSections release : sections)
+                release.sstable.releaseReference();
+        }
     }
 
-    /**
-     * Set up transfer of the specific SSTables.
-     * {@code sstables} must be marked as referenced so that not get deleted until transfer completes.
-     *
-     * @param ranges Transfer ranges
-     * @param sstables Transfer files
-     */
-    public void addTransferFiles(Collection<Range<Token>> ranges, Collection<SSTableReader> sstables)
+    private List<SSTableStreamingSections> getSSTableSectionsForRanges(Collection<Range<Token>> ranges, Collection<ColumnFamilyStore> stores)
     {
-        List<SSTableStreamingSections> sstableDetails = new ArrayList<>(sstables.size());
-        for (SSTableReader sstable : sstables)
-            sstableDetails.add(new SSTableStreamingSections(sstable, sstable.getPositionsForRanges(ranges), sstable.estimatedKeysForRanges(ranges)));
+        List<SSTableReader> sstables = new ArrayList<>();
+        try
+        {
+            for (ColumnFamilyStore cfStore : stores)
+            {
+                List<AbstractBounds<RowPosition>> rowBoundsList = new ArrayList<>(ranges.size());
+                for (Range<Token> range : ranges)
+                    rowBoundsList.add(range.toRowBounds());
+                ColumnFamilyStore.ViewFragment view = cfStore.markReferenced(rowBoundsList);
+                sstables.addAll(view.sstables);
+            }
 
-        addTransferFiles(sstableDetails);
+            List<SSTableStreamingSections> sections = new ArrayList<>(sstables.size());
+            for (SSTableReader sstable : sstables)
+            {
+                sections.add(new SSTableStreamingSections(sstable,
+                                                          sstable.getPositionsForRanges(ranges),
+                                                          sstable.estimatedKeysForRanges(ranges)));
+            }
+            return sections;
+        }
+        catch (Throwable t)
+        {
+            SSTableReader.releaseReferences(sstables);
+            throw t;
+        }
     }
+
+
 
     public void addTransferFiles(Collection<SSTableStreamingSections> sstableDetails)
     {
-        for (SSTableStreamingSections details : sstableDetails)
+        Iterator<SSTableStreamingSections> iter = sstableDetails.iterator();
+        while (iter.hasNext())
         {
+            SSTableStreamingSections details = iter.next();
             if (details.sections.isEmpty())
             {
                 // A reference was acquired on the sstable and we won't stream it
                 details.sstable.releaseReference();
+                iter.remove();
                 continue;
             }
 
@@ -295,6 +325,7 @@ public class StreamSession implements IEndpointStateChangeSubscriber, IFailureDe
                 transfers.put(cfId, task);
             }
             task.addTransferFile(details.sstable, details.estimatedKeys, details.sections);
+            iter.remove();
         }
     }
 
@@ -312,23 +343,26 @@ public class StreamSession implements IEndpointStateChangeSubscriber, IFailureDe
         }
     }
 
-    private void closeSession(State finalState)
+    private synchronized void closeSession(State finalState)
     {
-        state(finalState);
-
-        if (finalState == State.FAILED)
+        if (isAborted.compareAndSet(false, true))
         {
-            for (StreamTask task : Iterables.concat(receivers.values(), transfers.values()))
-                task.abort();
+            state(finalState);
+
+            if (finalState == State.FAILED)
+            {
+                for (StreamTask task : Iterables.concat(receivers.values(), transfers.values()))
+                    task.abort();
+            }
+
+            // Note that we shouldn't block on this close because this method is called on the handler
+            // incoming thread (so we would deadlock).
+            handler.close();
+
+            Gossiper.instance.unregister(this);
+            FailureDetector.instance.unregisterFailureDetectionEventListener(this);
+            streamResult.handleSessionComplete(this);
         }
-
-        // Note that we shouldn't block on this close because this method is called on the handler
-        // incoming thread (so we would deadlock).
-        handler.close();
-
-        Gossiper.instance.unregister(this);
-        FailureDetector.instance.unregisterFailureDetectionEventListener(this);
-        streamResult.handleSessionComplete(this);
     }
 
     /**
@@ -593,8 +627,8 @@ public class StreamSession implements IEndpointStateChangeSubscriber, IFailureDe
         if (!endpoint.equals(peer))
             return;
 
-        // We want a higher confidence in the failure detection than usual because failing a streaming wrongly has a high cost.
-        if (phi < 2 * DatabaseDescriptor.getPhiConvictThreshold())
+        // We want a higher confidence in the failure detection than usual because failing a streaming wrongly has a high cost (CASSANDRA-7063)
+        if (phi < 100 * DatabaseDescriptor.getPhiConvictThreshold())
             return;
 
         closeSession(State.FAILED);

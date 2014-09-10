@@ -76,7 +76,7 @@ public class AlterTableStatement extends SchemaAlteringStatement
         // validated in announceMigration()
     }
 
-    public void announceMigration() throws RequestValidationException
+    public boolean announceMigration() throws RequestValidationException
     {
         CFMetaData meta = validateColumnFamily(keyspace(), columnFamily());
         CFMetaData cfm = meta.clone();
@@ -89,8 +89,13 @@ public class AlterTableStatement extends SchemaAlteringStatement
                 if (cfDef.isCompact)
                     throw new InvalidRequestException("Cannot add new column to a COMPACT STORAGE table");
 
-                if (isStatic && !cfDef.isComposite)
-                    throw new InvalidRequestException("Static columns are not allowed in COMPACT STORAGE tables");
+                if (isStatic)
+                {
+                    if (!cfDef.isComposite)
+                        throw new InvalidRequestException("Static columns are not allowed in COMPACT STORAGE tables");
+                    if (cfDef.clusteringColumns().isEmpty())
+                        throw new InvalidRequestException("Static columns are only useful (and thus allowed) if the table has at least one clustering column");
+                }
 
                 if (name != null)
                 {
@@ -115,6 +120,14 @@ public class AlterTableStatement extends SchemaAlteringStatement
                     Map<ByteBuffer, CollectionType> collections = cfDef.hasCollections
                                                                 ? new HashMap<ByteBuffer, CollectionType>(cfDef.getCollectionType().defined)
                                                                 : new HashMap<ByteBuffer, CollectionType>();
+
+                    // If there used to be a collection column with the same name (that has been dropped), it will
+                    // still be appear in the ColumnToCollectionType because or reasons explained on #6276. The same
+                    // reason mean that we can't allow adding a new collection with that name (see the ticket for details).
+                    CollectionType previous = collections.get(columnName.key);
+                    if (previous != null && !type.isCompatibleWith(previous))
+                        throw new InvalidRequestException(String.format("Cannot add a collection with the name %s " +
+                                    "because a collection with the same name and a different type has already been used in the past", columnName));
 
                     collections.put(columnName.key, (CollectionType)type);
                     ColumnToCollectionType newColType = ColumnToCollectionType.getInstance(collections);
@@ -253,6 +266,7 @@ public class AlterTableStatement extends SchemaAlteringStatement
         }
 
         MigrationManager.announceColumnFamilyUpdate(cfm, false);
+        return true;
     }
 
     public String toString()

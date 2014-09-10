@@ -120,6 +120,7 @@ public class Config
 
     /* if the size of columns or super-columns are more than this, indexing will kick in */
     public Integer column_index_size_in_kb = 64;
+    public Integer batch_size_warn_threshold_in_kb = 5;
     public Integer in_memory_compaction_limit_in_mb = 64;
     public Integer concurrent_compactors = FBUtilities.getAvailableProcessors();
     public volatile Integer compaction_throughput_mb_per_sec = 16;
@@ -128,6 +129,7 @@ public class Config
     public Integer max_streaming_retries = 3;
 
     public volatile Integer stream_throughput_outbound_megabits_per_sec = 200;
+    public volatile Integer inter_dc_stream_throughput_outbound_megabits_per_sec = 0;
 
     public String[] data_file_directories;
 

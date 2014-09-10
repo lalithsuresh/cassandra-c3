@@ -23,9 +23,11 @@ import java.util.Date;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.cassandra.OrderedJUnit4ClassRunner;
 import org.apache.cassandra.Util;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
 
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.db.commitlog.CommitLog;
@@ -35,6 +37,7 @@ import org.apache.cassandra.utils.ByteBufferUtil;
 import static org.apache.cassandra.Util.column;
 import static org.apache.cassandra.db.KeyspaceTest.assertColumns;
 
+@RunWith(OrderedJUnit4ClassRunner.class)
 public class RecoveryManagerTest extends SchemaLoader
 {
     @Test
@@ -125,5 +128,41 @@ public class RecoveryManagerTest extends SchemaLoader
 
         ColumnFamily cf = Util.getColumnFamily(keyspace1, dk, "Standard1");
         Assert.assertEquals(6, cf.getColumnCount());
+    }
+
+
+    @Test
+    public void testRecoverPITUnordered() throws Exception
+    {
+        Date date = CommitLogArchiver.format.parse("2112:12:12 12:12:12");
+        long timeMS = date.getTime();
+
+        Keyspace keyspace1 = Keyspace.open("Keyspace1");
+        DecoratedKey dk = Util.dk("dkey");
+
+        // Col 0 and 9 are the only ones to be recovered
+        for (int i = 0; i < 10; ++i)
+        {
+            long ts;
+            if(i==9)
+                ts = TimeUnit.MILLISECONDS.toMicros(timeMS - 1000);
+            else
+                ts = TimeUnit.MILLISECONDS.toMicros(timeMS + (i * 1000));
+
+            ColumnFamily cf = ArrayBackedSortedColumns.factory.create("Keyspace1", "Standard1");
+            cf.addColumn(column("name-" + i, "value", ts));
+            RowMutation rm = new RowMutation("Keyspace1", dk.key, cf);
+            rm.apply();
+        }
+
+        ColumnFamily cf = Util.getColumnFamily(keyspace1, dk, "Standard1");
+        Assert.assertEquals(10, cf.getColumnCount());
+
+        keyspace1.getColumnFamilyStore("Standard1").clearUnsafe();
+        CommitLog.instance.resetUnsafe(); // disassociate segments from live CL
+        CommitLog.instance.recover();
+
+        cf = Util.getColumnFamily(keyspace1, dk, "Standard1");
+        Assert.assertEquals(2, cf.getColumnCount());
     }
 }

@@ -126,7 +126,7 @@ public class DatabaseDescriptor
     }
 
     @VisibleForTesting
-    static Config loadConfig() throws ConfigurationException
+    public static Config loadConfig() throws ConfigurationException
     {
         String loaderClass = System.getProperty("cassandra.config.loader");
         ConfigurationLoader loader = loaderClass == null
@@ -439,7 +439,9 @@ public class DatabaseDescriptor
             for (String token : tokensFromString(conf.initial_token))
                 partitioner.getTokenFactory().validate(token);
 
-        if (conf.num_tokens > MAX_NUM_TOKENS)
+        if (conf.num_tokens == null)
+        	conf.num_tokens = 1;
+        else if (conf.num_tokens > MAX_NUM_TOKENS)
             throw new ConfigurationException(String.format("A maximum number of %d tokens per node is supported", MAX_NUM_TOKENS));
 
         try
@@ -658,6 +660,11 @@ public class DatabaseDescriptor
         return conf.column_index_size_in_kb * 1024;
     }
 
+    public static int getBatchSizeWarnThreshold()
+    {
+        return conf.batch_size_warn_threshold_in_kb * 1024;
+    }
+
     public static Collection<String> getInitialTokens()
     {
         return tokensFromString(System.getProperty("cassandra.initial_token", conf.initial_token));
@@ -683,8 +690,9 @@ public class DatabaseDescriptor
         {
             if (System.getProperty("cassandra.replace_address", null) != null)
                 return InetAddress.getByName(System.getProperty("cassandra.replace_address", null));
-            else
-                return null;
+            else if (System.getProperty("cassandra.replace_address_first_boot", null) != null)
+                return InetAddress.getByName(System.getProperty("cassandra.replace_address_first_boot", null));
+            return null;
         }
         catch (UnknownHostException e)
         {
@@ -710,6 +718,11 @@ public class DatabaseDescriptor
 
     public static boolean isReplacing()
     {
+        if (System.getProperty("cassandra.replace_address_first_boot", null) != null && SystemKeyspace.bootstrapComplete())
+        {
+            logger.info("Replace address on first boot requested; this node is already bootstrapped");
+            return false;
+        }
         return getReplaceAddress() != null;
     }
 
@@ -816,6 +829,9 @@ public class DatabaseDescriptor
                 return getTruncateRpcTimeout();
             case READ_REPAIR:
             case MUTATION:
+            case PAXOS_COMMIT:
+            case PAXOS_PREPARE:
+            case PAXOS_PROPOSE:
             case COUNTER_MUTATION:
                 return getWriteRpcTimeout();
             default:
@@ -891,6 +907,11 @@ public class DatabaseDescriptor
         conf.compaction_throughput_mb_per_sec = value;
     }
 
+    public static boolean getDisableSTCSInL0()
+    {
+        return Boolean.getBoolean("cassandra.disable_stcs_in_l0");
+    }
+
     public static int getStreamThroughputOutboundMegabitsPerSec()
     {
         return conf.stream_throughput_outbound_megabits_per_sec;
@@ -899,6 +920,16 @@ public class DatabaseDescriptor
     public static void setStreamThroughputOutboundMegabitsPerSec(int value)
     {
         conf.stream_throughput_outbound_megabits_per_sec = value;
+    }
+
+    public static int getInterDCStreamThroughputOutboundMegabitsPerSec()
+    {
+        return conf.inter_dc_stream_throughput_outbound_megabits_per_sec;
+    }
+
+    public static void setInterDCStreamThroughputOutboundMegabitsPerSec(int value)
+    {
+        conf.inter_dc_stream_throughput_outbound_megabits_per_sec = value;
     }
 
     public static String[] getAllDataFileLocations()
@@ -1103,9 +1134,14 @@ public class DatabaseDescriptor
         return conf.auto_snapshot;
     }
 
+    @VisibleForTesting
+    public static void setAutoSnapshot(boolean autoSnapshot) {
+        conf.auto_snapshot = autoSnapshot;
+    }
+
     public static boolean isAutoBootstrap()
     {
-        return conf.auto_bootstrap;
+        return Boolean.parseBoolean(System.getProperty("cassandra.auto_bootstrap", conf.auto_bootstrap.toString()));
     }
 
     public static void setHintedHandoffEnabled(boolean hintedHandoffEnabled)
@@ -1215,6 +1251,11 @@ public class DatabaseDescriptor
     public static int getHintedHandoffThrottleInKB()
     {
         return conf.hinted_handoff_throttle_in_kb;
+    }
+
+    public static void setHintedHandoffThrottleInKB(Integer throttleInKB)
+    {
+        conf.hinted_handoff_throttle_in_kb = throttleInKB;
     }
 
     public static int getBatchlogReplayThrottleInKB()

@@ -254,6 +254,12 @@ public abstract class Constants
         {
             return bytes;
         }
+
+        @Override
+        public String toString()
+        {
+            return ByteBufferUtil.bytesToHex(bytes);
+        }
     }
 
     public static class Marker extends AbstractMarker
@@ -318,7 +324,7 @@ public abstract class Constants
             long increment = ByteBufferUtil.toLong(bytes);
             prefix = maybeUpdatePrefix(cf.metadata(), prefix);
             ByteBuffer cname = columnName == null ? prefix.build() : prefix.add(columnName.key).build();
-            cf.addCounter(cname, increment);
+            cf.addColumn(params.makeCounter(cname, increment));
         }
     }
 
@@ -341,7 +347,7 @@ public abstract class Constants
 
             prefix = maybeUpdatePrefix(cf.metadata(), prefix);
             ByteBuffer cname = columnName == null ? prefix.build() : prefix.add(columnName.key).build();
-            cf.addCounter(cname, -increment);
+            cf.addColumn(params.makeCounter(cname, -increment));
         }
     }
 

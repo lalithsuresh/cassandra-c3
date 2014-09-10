@@ -318,11 +318,6 @@ public interface StorageServiceMBean extends NotificationEmitter
     public void move(String newToken) throws IOException;
 
     /**
-     * @param srcTokens tokens to move to this node
-     */
-    public void relocate(Collection<String> srcTokens) throws IOException;
-
-    /**
      * removeToken removes token (and all data associated with
      * enpoint that had it) from the ring
      */
@@ -340,6 +335,8 @@ public interface StorageServiceMBean extends NotificationEmitter
 
     /** set the logging level at runtime */
     public void setLog4jLevel(String classQualifier, String level);
+
+    public Map<String,String>getLoggingLevels();
 
     /** get the operational mode (leaving, joining, normal, decommissioned, client) **/
     public String getOperationMode();
@@ -489,11 +486,6 @@ public interface StorageServiceMBean extends NotificationEmitter
      */
     public double getTracingProbability();
 
-    /** Begin processing of queued range transfers. */
-    public void enableScheduledRangeXfers();
-    /** Disable processing of queued range transfers. */
-    public void disableScheduledRangeXfers();
-
     void disableAutoCompaction(String ks, String ... columnFamilies) throws IOException;
     void enableAutoCompaction(String ks, String ... columnFamilies) throws IOException;
 
@@ -513,4 +505,7 @@ public interface StorageServiceMBean extends NotificationEmitter
     public int getTombstoneFailureThreshold();
     /** Sets the threshold for abandoning queries with many tombstones */
     public void setTombstoneFailureThreshold(int tombstoneDebugThreshold);
+
+    /** Sets the hinted handoff throttle in kb per second, per delivery thread. */
+    public void setHintedHandoffThrottleInKB(int throttleInKB);
 }
