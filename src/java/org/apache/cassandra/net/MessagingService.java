@@ -1137,7 +1137,7 @@ public final class MessagingService implements MessagingServiceMBean
 
         SendReceiveRateContainer(InetAddress endpoint) {
             this.endpoint = endpoint;
-            this.sendingRateLimiter = new SimpleRateLimiter(1, RATE_INTERVAL_MS, 50);
+            this.sendingRateLimiter = new SimpleRateLimiter(1, RATE_INTERVAL_MS, 30);
             this.receiveRateTracker = new SlottedRateTracker(RECEIVE_RATE_INITIAL, RATE_INTERVAL_MS);
         }
 

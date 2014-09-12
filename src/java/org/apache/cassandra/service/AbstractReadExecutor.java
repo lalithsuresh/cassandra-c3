@@ -52,7 +52,7 @@ public abstract class AbstractReadExecutor
     protected final ReadCallback<ReadResponse, Row> handler;
     protected final ReadCommand command;
     protected final RowDigestResolver resolver;
-    protected final List<InetAddress> unfiltered;
+    protected List<InetAddress> unfiltered;
     protected List<InetAddress> endpoints;
     protected final ColumnFamilyStore cfs;
 
@@ -97,7 +97,6 @@ public abstract class AbstractReadExecutor
             // are empty, then we tell the corresponding actor to wait for the
             // minimum duration required until one of the rate limiters is available.
             //
-
             double minimumDurationToWait = Double.MAX_VALUE;
             for(int i = 0; i < newEndpointList.size(); i++) {
                 final InetAddress ep = newEndpointList.get(i);
@@ -127,6 +126,7 @@ public abstract class AbstractReadExecutor
             // We're within our expected rate. Update le endpoints.
             this.endpoints = newEndpointList.subList(0, originalSize);
             handler.endpoints = this.endpoints;
+            unfiltered = newEndpointList;
         }
 
         // The data-request message is sent to dataPoint, the node that will actually get the data for us

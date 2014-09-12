@@ -42,7 +42,6 @@ public class ReplicaGroupActor extends UntypedActorWithStash {
     public void onReceive(Object msg) {
         if (msg instanceof AbstractReadExecutor) {
             long durationToWait = (long) ((AbstractReadExecutor) msg).pushRead();
-
             assert (durationToWait >= 0);
             if (durationToWait > 0) {
                 stash();
