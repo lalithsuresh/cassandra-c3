@@ -1,9 +1,13 @@
 package org.apache.cassandra.metrics;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * Created by lalith on 31.08.14.
  */
 public class SimpleRateLimiter {
+    private static final Logger logger = LoggerFactory.getLogger(SimpleRateLimiter.class);
     private long lastSent;
     private double tokens;
 
@@ -21,15 +25,15 @@ public class SimpleRateLimiter {
     }
 
     public synchronized double tryAcquire() {
-        tokens = Math.min(maxTokens,
-                tokens + (rate/rateInterval * (System.nanoTime() - lastSent)));
-        if (tokens >= 1) {
-            tokens -= 1;
+        double currentTokens = Math.min(maxTokens,
+                                        tokens + (rate/rateInterval * (System.nanoTime() - lastSent)));
+        if (currentTokens >= 1) {
+            tokens = currentTokens - 1;
             lastSent = System.nanoTime();
             return 0;
         }
         else {
-            return (1 - tokens) * rateInterval/rate; // Nanoseconds
+            return (1 - currentTokens) * rateInterval/rate; // Nanoseconds
         }
     }
 

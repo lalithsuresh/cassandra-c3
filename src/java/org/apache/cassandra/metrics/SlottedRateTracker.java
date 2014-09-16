@@ -37,7 +37,7 @@ public class SlottedRateTracker {
         return this.currentRate;
     }
 
-    public synchronized void setInterval(long interval) {
+    public synchronized void  setInterval(long interval) {
         this.interval = interval;
     }
 

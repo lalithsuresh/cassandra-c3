@@ -657,4 +657,5 @@ inter_dc_tcp_nodelay: false
 # for sequential access. Note: This could be harmful for fat rows, see CASSANDRA-4937
 # for further details on that topic.
 preheat_kernel_page_cache: false
+dynamic_snitch: true
 score_strategy: ED
