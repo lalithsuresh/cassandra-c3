@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -15,18 +15,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.cassandra.cli.transport;
+package org.apache.cassandra.notifications;
 
-import org.apache.thrift.transport.TFramedTransport;
-import org.apache.thrift.transport.TTransport;
-import org.apache.thrift.transport.TTransportFactory;
-
-public class FramedTransportFactory extends TTransportFactory
+/**
+ * Fired during truncate, after the memtable has been flushed but before any
+ * snapshot is taken and SSTables are discarded
+ */
+public class TruncationNotification implements INotification
 {
-    public static final int DEFAULT_MAX_FRAME_SIZE = 15 * 1024 * 1024; // 15 MiB
+    public final long truncatedAt;
 
-    public TTransport getTransport(TTransport base)
+    public TruncationNotification(long truncatedAt)
     {
-        return new TFramedTransport(base, DEFAULT_MAX_FRAME_SIZE);
+        this.truncatedAt = truncatedAt;
     }
 }

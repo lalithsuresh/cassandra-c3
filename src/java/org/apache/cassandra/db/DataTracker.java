@@ -205,6 +205,18 @@ public class DataTracker
         if (inactive.size() < Iterables.size(sstables))
             return false;
 
+        if (Iterables.any(sstables, new Predicate<SSTableReader>()
+        {
+            @Override
+            public boolean apply(SSTableReader sstable)
+            {
+                return sstable.isMarkedCompacted();
+            }
+        }))
+        {
+            return false;
+        }
+
         View newView = currentView.markCompacting(inactive);
         return view.compareAndSet(currentView, newView);
     }
@@ -459,6 +471,13 @@ public class DataTracker
     public void notifyRenewed(Memtable renewed)
     {
         INotification notification = new MemtableRenewedNotification(renewed);
+        for (INotificationConsumer subscriber : subscribers)
+            subscriber.handleNotification(notification, this);
+    }
+
+    public void notifyTruncated(long truncatedAt)
+    {
+        INotification notification = new TruncationNotification(truncatedAt);
         for (INotificationConsumer subscriber : subscribers)
             subscriber.handleNotification(notification, this);
     }

@@ -1,3 +1,66 @@
+2.0.11:
+ * Reject conditions on DELETE unless full PK is given (CASSANDRA-6430)
+ * Properly reject the token function DELETE (CASSANDRA-7747)
+ * Force batchlog replay before decommissioning a node (CASSANDRA-7446)
+ * Fix hint replay with many accumulated expired hints (CASSANDRA-6998)
+ * Fix duplicate results in DISTINCT queries on static columns with query
+   paging (CASSANDRA-8108)
+ * Add DateTieredCompactionStrategy (CASSANDRA-6602)
+ * Properly validate ascii and utf8 string literals in CQL queries (CASSANDRA-8101)
+ * (cqlsh) Fix autocompletion for alter keyspace (CASSANDRA-8021)
+ * Create backup directories for commitlog archiving during startup (CASSANDRA-8111)
+ * Reduce totalBlockFor() for LOCAL_* consistency levels (CASSANDRA-8058)
+ * Fix merging schemas with re-dropped keyspaces (CASSANDRA-7256)
+ * Fix counters in supercolumns during live upgrades from 1.2 (CASSANDRA-7188)
+ * Notify DT subscribers when a column family is truncated (CASSANDRA-8088)
+ * Add sanity check of $JAVA on startup (CASSANDRA-7676)
+ * Schedule fat client schema pull on join (CASSANDRA-7993)
+ * Don't reset nodes' versions when closing IncomingTcpConnections
+   (CASSANDRA-7734)
+ * Record the real messaging version in all cases in OutboundTcpConnection
+   (CASSANDRA-8057)
+ * SSL does not work in cassandra-cli (CASSANDRA-7899)
+ * Fix potential exception when using ReversedType in DynamicCompositeType
+   (CASSANDRA-7898)
+ * Better validation of collection values (CASSANDRA-7833)
+ * Track min/max timestamps correctly (CASSANDRA-7969)
+ * Fix possible overflow while sorting CL segments for replay (CASSANDRA-7992)
+ * Increase nodetool Xmx (CASSANDRA-7956)
+ * Archive any commitlog segments present at startup (CASSANDRA-6904)
+ * Ignore fat clients when checking for endpoint collision (CASSANDRA-7939)
+ * CrcCheckChance should adjust based on live CFMetadata not 
+   sstable metadata (CASSANDRA-7978)
+ * token() should only accept columns in the partitioning
+   key order (CASSANDRA-6075)
+ * Add method to invalidate permission cache via JMX (CASSANDRA-7977)
+ * Allow propagating multiple gossip states atomically (CASSANDRA-6125)
+ * Log exceptions related to unclean native protocol client disconnects
+   at DEBUG or INFO (CASSANDRA-7849)
+ * Allow permissions cache to be set via JMX (CASSANDRA-7698)
+ * Include schema_triggers CF in readable system resources (CASSANDRA-7967)
+ * Fix RowIndexEntry to report correct serializedSize (CASSANDRA-7948)
+ * Make CQLSSTableWriter sync within partitions (CASSANDRA-7360)
+ * Potentially use non-local replicas in CqlConfigHelper (CASSANDRA-7906)
+ * Explicitly disallowing mixing multi-column and single-column
+   relations on clustering columns (CASSANDRA-7711)
+ * Better error message when condition is set on PK column (CASSANDRA-7804)
+ * Forbid re-adding dropped counter columns (CASSANDRA-7831)
+ * Fix CFMetaData#isThriftCompatible() for PK-only tables (CASSANDRA-7832)
+ * Always reject inequality on the partition key without token()
+   (CASSANDRA-7722)
+ * Always send Paxos commit to all replicas (CASSANDRA-7479)
+ * Make disruptor_thrift_server invocation pool configurable (CASSANDRA-7594)
+ * Make repair no-op when RF=1 (CASSANDRA-7864)
+ * Fix NPE when table dropped during streaming (CASSANDRA-7946)
+ * Fix wrong progress when streaming uncompressed (CASSANDRA-7878)
+ * Fix possible infinite loop in creating repair range (CASSANDRA-7983)
+ * Fix unit in nodetool for streaming throughput (CASSANDRA-7375)
+ * Do not exit nodetool repair when receiving JMX NOTIF_LOST (CASSANDRA-7909)
+ * Stream to private IP when available (CASSANDRA-8084)
+Merged from 1.2:
+ * Don't index tombstones (CASSANDRA-7828)
+
+
 2.0.10
  * Don't send schema change responses and events for no-op DDL
    statements (CASSANDRA-7600)
@@ -68,6 +131,8 @@
  * Fix sstableloader unable to connect encrypted node (CASSANDRA-7585)
  * Make StreamReceiveTask thread safe and gc friendly (CASSANDRA-7795)
 Merged from 1.2:
+ * Don't allow compacted sstables to be marked as compacting (CASSANDRA-7145)
+ * Track expired tombstones (CASSANDRA-7810)
  * Validate empty cell names from counter updates (CASSANDRA-7798)
  * Improve PasswordAuthenticator default super user setup (CASSANDRA-7788)
  * Remove duplicates from StorageService.getJoiningNodes (CASSANDRA-7478)
@@ -80,6 +145,7 @@ Merged from 1.2:
    are thrown while handling native protocol messages (CASSANDRA-7470)
  * Fix row size miscalculation in LazilyCompactedRow (CASSANDRA-7543)
  * Fix race in background compaction check (CASSANDRA-7745)
+ * Don't clear out range tombstones during compaction (CASSANDRA-7808)
 
 
 2.0.9

@@ -452,7 +452,7 @@ public final class CFMetaData
     public CFMetaData populateIoCacheOnFlush(boolean prop) {populateIoCacheOnFlush = prop; return this;}
     public CFMetaData droppedColumns(Map<ByteBuffer, Long> cols) {droppedColumns = cols; return this;}
     public CFMetaData triggers(Map<String, TriggerDefinition> prop) {triggers = prop; return this;}
-    public CFMetaData setDense(Boolean prop) {isDense = prop; return this;}
+    public CFMetaData isDense(Boolean prop) {isDense = prop; return this;}
 
     public CFMetaData(String keyspace, String name, ColumnFamilyType type, AbstractType<?> comp, AbstractType<?> subcc)
     {
@@ -605,7 +605,7 @@ public final class CFMetaData
                       .populateIoCacheOnFlush(oldCFMD.populateIoCacheOnFlush)
                       .droppedColumns(new HashMap<>(oldCFMD.droppedColumns))
                       .triggers(new HashMap<>(oldCFMD.triggers))
-                      .setDense(oldCFMD.isDense)
+                      .isDense(oldCFMD.isDense)
                       .rebuild();
     }
 
@@ -631,6 +631,23 @@ public final class CFMetaData
     public boolean isSuper()
     {
         return cfType == ColumnFamilyType.Super;
+    }
+
+    /**
+      * The '.' char is the only way to identify if the CFMetadata is for a secondary index
+      */
+    public boolean isSecondaryIndex()
+    {
+        return cfName.contains(".");
+    }
+
+    /**
+     *
+     * @return The name of the parent cf if this is a seconday index
+     */
+    public String getParentColumnFamilyName()
+    {
+       return isSecondaryIndex() ? cfName.substring(0, cfName.indexOf('.')) : null;
     }
 
     public double getReadRepairChance()
@@ -786,6 +803,11 @@ public final class CFMetaData
         return droppedColumns;
     }
 
+    public Boolean getIsDense()
+    {
+        return isDense;
+    }
+
     public boolean equals(Object obj)
     {
         if (obj == this)
@@ -860,6 +882,7 @@ public final class CFMetaData
             .append(populateIoCacheOnFlush)
             .append(droppedColumns)
             .append(triggers)
+            .append(isDense)
             .toHashCode();
     }
 
@@ -1116,7 +1139,7 @@ public final class CFMetaData
 
         triggers = cfm.triggers;
 
-        setDense(cfm.isDense);
+        isDense(cfm.isDense);
 
         rebuild();
         logger.debug("application result is {}", this);
@@ -1711,7 +1734,7 @@ public final class CFMetaData
                 cfm.populateIoCacheOnFlush(result.getBoolean("populate_io_cache_on_flush"));
 
             if (result.has("is_dense"))
-                cfm.setDense(result.getBoolean("is_dense"));
+                cfm.isDense(result.getBoolean("is_dense"));
 
             /*
              * The info previously hold by key_aliases, column_aliases and value_alias is now stored in column_metadata (because 1) this
@@ -1963,7 +1986,7 @@ public final class CFMetaData
     {
         List<ColumnDefinition> pkCols = nullInitializedList(keyValidator.componentsCount());
         if (isDense == null)
-            setDense(isDense(comparator, column_metadata.values()));
+            isDense(calculateIsDense(comparator, column_metadata.values()));
         int nbCkCols = isDense
                      ? comparator.componentsCount()
                      : comparator.componentsCount() - (hasCollection() ? 2 : 1);
@@ -2086,7 +2109,7 @@ public final class CFMetaData
      * information for table just created through thrift, nor for table prior to CASSANDRA-7744, so this
      * method does its best to infer whether the table is dense or not based on other elements.
      */
-    private static boolean isDense(AbstractType<?> comparator, Collection<ColumnDefinition> defs)
+    private static boolean calculateIsDense(AbstractType<?> comparator, Collection<ColumnDefinition> defs)
     {
         /*
          * As said above, this method is only here because we need to deal with thrift upgrades.
@@ -2161,6 +2184,11 @@ public final class CFMetaData
             if (def.type == ColumnDefinition.Type.REGULAR && !def.isThriftCompatible())
                 return false;
         }
+
+        // The table might also have no REGULAR columns (be PK-only), but still be "thrift incompatible". See #7832.
+        if (isCQL3OnlyPKComparator(comparator) && !isDense)
+            return false;
+
         return true;
     }
 

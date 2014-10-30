@@ -706,7 +706,13 @@ public class NodeCmd
             outs.printf("%s %s%n", status.description, status.planId.toString());
             for (SessionInfo info : status.sessions)
             {
-                outs.printf("    %s%n", info.peer.toString());
+                outs.printf("    %s", info.peer.toString());
+                // print private IP when it is used
+                if (!info.peer.equals(info.connecting))
+                {
+                    outs.printf(" (using %s)", info.connecting.toString());
+                }
+                outs.printf("%n");
                 if (!info.receivingSummaries.isEmpty())
                 {
                     outs.printf("        Receiving %d files, %d bytes total%n", info.getTotalFilesToReceive(), info.getTotalSizeToReceive());
@@ -811,7 +817,7 @@ public class NodeCmd
      */
     public void printStreamThroughput(PrintStream outs)
     {
-        outs.println("Current stream throughput: " + probe.getStreamThroughput() + " MB/s");
+        outs.println("Current stream throughput: " + probe.getStreamThroughput() + " Mb/s");
     }
 
     /**

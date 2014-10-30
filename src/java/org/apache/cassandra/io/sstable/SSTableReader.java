@@ -624,7 +624,13 @@ public class SSTableReader extends SSTable implements Closeable
         if (!compression)
             throw new IllegalStateException(this + " is not compressed");
 
-        return ((ICompressedFile) dfile).getMetadata();
+        CompressionMetadata cmd = ((ICompressedFile) dfile).getMetadata();
+
+        //We need the parent cf metadata
+        String cfName = metadata.isSecondaryIndex() ? metadata.getParentColumnFamilyName() : metadata.cfName;
+        cmd.parameters.setLiveMetadata(Schema.instance.getCFMetaData(metadata.ksName, cfName));
+
+        return cmd;
     }
 
     /**
@@ -1122,6 +1128,11 @@ public class SSTableReader extends SSTable implements Closeable
             logger.debug("Marking " + getFilename() + " compacted");
 
         return !isCompacted.getAndSet(true);
+    }
+
+    public boolean isMarkedCompacted()
+    {
+        return isCompacted.get();
     }
 
     public void markSuspect()

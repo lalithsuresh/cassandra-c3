@@ -15,29 +15,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.cassandra.io.compress;
+package org.apache.cassandra.auth;
 
-import java.io.IOException;
-
-public class CorruptBlockException extends IOException
+public interface AuthMBean
 {
-    public CorruptBlockException(String filePath, CompressionMetadata.Chunk chunk)
-    {
-        this(filePath, chunk, null);
-    }
+    public int getPermissionsValidity();
 
-    public CorruptBlockException(String filePath, CompressionMetadata.Chunk chunk, Throwable cause)
-    {
-        this(filePath, chunk.offset, chunk.length, cause);
-    }
+    public void setPermissionsValidity(int timeoutInMs);
 
-    public CorruptBlockException(String filePath, long offset, int length)
-    {
-        this(filePath, offset, length, null);
-    }
-
-    public CorruptBlockException(String filePath, long offset, int length, Throwable cause)
-    {
-        super(String.format("(%s): corruption detected, chunk at %d of length %d.", filePath, offset, length), cause);
-    }
+    public void invalidatePermissionsCache();
 }
