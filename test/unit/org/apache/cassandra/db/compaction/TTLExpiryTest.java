@@ -20,8 +20,7 @@ package org.apache.cassandra.db.compaction;
  * 
  */
 
-
-
+import com.google.common.collect.Sets;
 import java.util.concurrent.ExecutionException;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -34,19 +33,65 @@ import org.apache.cassandra.db.DataRange;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.RowMutation;
-import org.apache.cassandra.db.RowPosition;
-import org.apache.cassandra.db.columniterator.IdentityQueryFilter;
 import org.apache.cassandra.db.columniterator.OnDiskAtomIterator;
-import org.apache.cassandra.db.filter.QueryFilter;
 import org.apache.cassandra.io.sstable.SSTableReader;
 import org.apache.cassandra.io.sstable.SSTableScanner;
 import org.apache.cassandra.utils.ByteBufferUtil;
+
+import java.util.Collections;
+import java.util.Set;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 @RunWith(OrderedJUnit4ClassRunner.class)
 public class TTLExpiryTest extends SchemaLoader
 {
+    @Test
+    public void testAggressiveFullyExpired()
+    {
+        ColumnFamilyStore cfs = Keyspace.open("Keyspace1").getColumnFamilyStore("Standard1");
+        cfs.disableAutoCompaction();
+        cfs.metadata.gcGraceSeconds(0);
+
+        DecoratedKey ttlKey = Util.dk("ttl");
+        RowMutation rm = new RowMutation("Keyspace1", ttlKey.key);
+        rm.add("Standard1", ByteBufferUtil.bytes("col1"), ByteBufferUtil.EMPTY_BYTE_BUFFER, 1, 1);
+        rm.add("Standard1", ByteBufferUtil.bytes("col2"), ByteBufferUtil.EMPTY_BYTE_BUFFER, 3, 1);
+        rm.applyUnsafe();
+        cfs.forceBlockingFlush();
+
+        rm = new RowMutation("Keyspace1", ttlKey.key);
+        rm.add("Standard1", ByteBufferUtil.bytes("col1"), ByteBufferUtil.EMPTY_BYTE_BUFFER, 2, 1);
+        rm.add("Standard1", ByteBufferUtil.bytes("col2"), ByteBufferUtil.EMPTY_BYTE_BUFFER, 5, 1);
+        rm.applyUnsafe();
+        cfs.forceBlockingFlush();
+
+        rm = new RowMutation("Keyspace1", ttlKey.key);
+        rm.add("Standard1", ByteBufferUtil.bytes("col1"), ByteBufferUtil.EMPTY_BYTE_BUFFER, 4, 1);
+        rm.add("Standard1", ByteBufferUtil.bytes("shadow"), ByteBufferUtil.EMPTY_BYTE_BUFFER, 7, 1);
+        rm.applyUnsafe();
+        cfs.forceBlockingFlush();
+
+        rm = new RowMutation("Keyspace1", ttlKey.key);
+        rm.add("Standard1", ByteBufferUtil.bytes("shadow"), ByteBufferUtil.EMPTY_BYTE_BUFFER, 6, 3);
+        rm.add("Standard1", ByteBufferUtil.bytes("col2"), ByteBufferUtil.EMPTY_BYTE_BUFFER, 8, 1);
+        rm.applyUnsafe();
+        cfs.forceBlockingFlush();
+
+        Set<SSTableReader> sstables = Sets.newHashSet(cfs.getSSTables());
+        int now = (int)(System.currentTimeMillis() / 1000);
+        int gcBefore = now + 2;
+        Set<SSTableReader> expired = CompactionController.getFullyExpiredSSTables(
+                cfs,
+                sstables,
+                Collections.EMPTY_SET,
+                gcBefore);
+        assertEquals(2, expired.size());
+
+        cfs.clearUnsafe();
+    }
+
     @Test
     public void testSimpleExpire() throws ExecutionException, InterruptedException
     {
