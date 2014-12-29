@@ -358,6 +358,9 @@ public interface StorageServiceMBean extends NotificationEmitter
     /** get the operational mode (leaving, joining, normal, decommissioned, client) **/
     public String getOperationMode();
 
+    /** Returns whether the storage service is starting or not */
+    public boolean isStarting();
+
     /** get the progress of a drain operation */
     public String getDrainProgress();
 
@@ -408,6 +411,9 @@ public interface StorageServiceMBean extends NotificationEmitter
 
     // allows a user to recover a forcibly 'killed' node
     public void startGossiping();
+
+    // allows a user to see whether gossip is running or not
+    public boolean isGossipRunning();
 
     // allows a user to forcibly completely stop cassandra
     public void stopDaemon();

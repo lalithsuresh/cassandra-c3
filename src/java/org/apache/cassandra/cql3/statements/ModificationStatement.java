@@ -22,7 +22,6 @@ import java.util.*;
 
 import com.google.common.base.Function;
 import com.google.common.collect.Iterables;
-import org.github.jamm.MemoryMeter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,7 +41,9 @@ import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.service.StorageProxy;
 import org.apache.cassandra.thrift.ThriftValidation;
 import org.apache.cassandra.transport.messages.ResultMessage;
+import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.Pair;
+import org.github.jamm.MemoryMeter;
 
 /*
  * Abstract parent class of individual modifications, i.e. INSERT, UPDATE and DELETE.
@@ -271,9 +272,10 @@ public abstract class ModificationStatement implements CQLStatement, MeasurableF
             if (rel.onToken)
                 throw new InvalidRequestException(String.format("The token function cannot be used in WHERE clauses for UPDATE and DELETE statements: %s", relation));
 
-            CFDefinition.Name name = cfDef.get(rel.getEntity());
+            ColumnIdentifier id = rel.getEntity().prepare(cfm);
+            CFDefinition.Name name = cfDef.get(id);
             if (name == null)
-                throw new InvalidRequestException(String.format("Unknown key identifier %s", rel.getEntity()));
+                throw new InvalidRequestException(String.format("Unknown key identifier %s", id));
 
             switch (name.kind)
             {
@@ -326,7 +328,7 @@ public abstract class ModificationStatement implements CQLStatement, MeasurableF
     throws InvalidRequestException
     {
         CFDefinition cfDef = cfm.getCfDef();
-        ColumnNameBuilder keyBuilder = cfDef.getKeyNameBuilder();
+        ColumnNameBuilder keyBuilderBase = cfDef.getKeyNameBuilder();
         List<ByteBuffer> keys = new ArrayList<ByteBuffer>();
         for (CFDefinition.Name name : cfDef.partitionKeys())
         {
@@ -335,14 +337,19 @@ public abstract class ModificationStatement implements CQLStatement, MeasurableF
                 throw new InvalidRequestException(String.format("Missing mandatory PRIMARY KEY part %s", name));
 
             List<ByteBuffer> values = r.values(variables);
-
-            if (keyBuilder.remainingCount() == 1)
+            if (keyBuilderBase.remainingCount() == 1)
             {
                 for (ByteBuffer val : values)
                 {
                     if (val == null)
                         throw new InvalidRequestException(String.format("Invalid null value for partition key part %s", name));
-                    ByteBuffer key = keyBuilder.copy().add(val).build();
+
+                    ColumnNameBuilder keyBuilder = keyBuilderBase.copy().add(val);
+                    if (keyBuilder.getLength() > FBUtilities.MAX_UNSIGNED_SHORT)
+                        throw new InvalidRequestException(String.format("Partition key size %s exceeds maximum %s",
+                                                                        keyBuilder.getLength(),
+                                                                        FBUtilities.MAX_UNSIGNED_SHORT));
+                    ByteBuffer key = keyBuilder.build();
                     ThriftValidation.validateKey(cfm, key);
                     keys.add(key);
                 }
@@ -354,7 +361,7 @@ public abstract class ModificationStatement implements CQLStatement, MeasurableF
                 ByteBuffer val = values.get(0);
                 if (val == null)
                     throw new InvalidRequestException(String.format("Invalid null value for partition key part %s", name));
-                keyBuilder.add(val);
+                keyBuilderBase.add(val);
             }
         }
         return keys;
@@ -682,7 +689,7 @@ public abstract class ModificationStatement implements CQLStatement, MeasurableF
             }
             for (ColumnIdentifier id : columnsWithConditions)
                 names.add(cfDef.get(id));
-            selection = Selection.forColumns(names);
+            selection = Selection.forColumns(new ArrayList<>(names));
         }
 
         long now = System.currentTimeMillis();
@@ -725,7 +732,6 @@ public abstract class ModificationStatement implements CQLStatement, MeasurableF
         Collection<IMutation> mutations = new ArrayList<IMutation>();
         for (ByteBuffer key: keys)
         {
-            ThriftValidation.validateKey(cfm, key);
             ColumnFamily cf = UnsortedColumns.factory.create(cfm);
             addUpdateForKey(cf, key, clusteringPrefix, params);
             RowMutation rm = new RowMutation(cfm.ksName, key, cf);
@@ -760,15 +766,15 @@ public abstract class ModificationStatement implements CQLStatement, MeasurableF
     public static abstract class Parsed extends CFStatement
     {
         protected final Attributes.Raw attrs;
-        protected final List<Pair<ColumnIdentifier, ColumnCondition.Raw>> conditions;
+        protected final List<Pair<ColumnIdentifier.Raw, ColumnCondition.Raw>> conditions;
         private final boolean ifNotExists;
         private final boolean ifExists;
 
-        protected Parsed(CFName name, Attributes.Raw attrs, List<Pair<ColumnIdentifier, ColumnCondition.Raw>> conditions, boolean ifNotExists, boolean ifExists)
+        protected Parsed(CFName name, Attributes.Raw attrs, List<Pair<ColumnIdentifier.Raw, ColumnCondition.Raw>> conditions, boolean ifNotExists, boolean ifExists)
         {
             super(name);
             this.attrs = attrs;
-            this.conditions = conditions == null ? Collections.<Pair<ColumnIdentifier, ColumnCondition.Raw>>emptyList() : conditions;
+            this.conditions = conditions == null ? Collections.<Pair<ColumnIdentifier.Raw, ColumnCondition.Raw>>emptyList() : conditions;
             this.ifNotExists = ifNotExists;
             this.ifExists = ifExists;
         }
@@ -815,11 +821,12 @@ public abstract class ModificationStatement implements CQLStatement, MeasurableF
                 }
                 else
                 {
-                    for (Pair<ColumnIdentifier, ColumnCondition.Raw> entry : conditions)
+                    for (Pair<ColumnIdentifier.Raw, ColumnCondition.Raw> entry : conditions)
                     {
-                        CFDefinition.Name name = cfDef.get(entry.left);
+                        ColumnIdentifier id = entry.left.prepare(cfDef.cfm);
+                        CFDefinition.Name name = cfDef.get(id);
                         if (name == null)
-                            throw new InvalidRequestException(String.format("Unknown identifier %s", entry.left));
+                            throw new InvalidRequestException(String.format("Unknown identifier %s", id));
 
                         ColumnCondition condition = entry.right.prepare(name);
                         condition.collectMarkerSpecification(boundNames);
@@ -828,7 +835,7 @@ public abstract class ModificationStatement implements CQLStatement, MeasurableF
                         {
                             case KEY_ALIAS:
                             case COLUMN_ALIAS:
-                                throw new InvalidRequestException(String.format("PRIMARY KEY column '%s' cannot have IF conditions", entry.left));
+                                throw new InvalidRequestException(String.format("PRIMARY KEY column '%s' cannot have IF conditions", id));
                             case VALUE_ALIAS:
                             case COLUMN_METADATA:
                             case STATIC:

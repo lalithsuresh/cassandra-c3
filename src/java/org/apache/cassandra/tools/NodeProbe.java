@@ -602,6 +602,11 @@ public class NodeProbe
         return ssProxy.getOperationMode();
     }
 
+    public boolean isStarting()
+    {
+        return ssProxy.isStarting();
+    }
+
     public void truncate(String keyspaceName, String cfName)
     {
         try
@@ -790,6 +795,11 @@ public class NodeProbe
     public void startGossiping()
     {
         ssProxy.startGossiping();
+    }
+
+    public boolean isGossipRunning()
+    {
+        return ssProxy.isGossipRunning();
     }
 
     public void stopThriftServer()

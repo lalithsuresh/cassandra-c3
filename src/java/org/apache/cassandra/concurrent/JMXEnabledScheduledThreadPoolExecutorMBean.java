@@ -15,14 +15,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.cassandra.db;
+package org.apache.cassandra.concurrent;
 
-import org.apache.cassandra.thrift.InvalidRequestException;
-
-public class ColumnFamilyNotDefinedException extends InvalidRequestException
+/**
+ * @see org.apache.cassandra.metrics.ThreadPoolMetrics
+ */
+@Deprecated
+public interface JMXEnabledScheduledThreadPoolExecutorMBean extends JMXEnabledThreadPoolExecutorMBean
 {
-    public ColumnFamilyNotDefinedException(String message)
-    {
-        super(message);
-    }
 }

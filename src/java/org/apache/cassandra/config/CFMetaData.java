@@ -217,7 +217,7 @@ public final class CFMetaData
                                                              + "started_at timestamp,"
                                                              + "parameters map<text, text>,"
                                                              + "duration int"
-                                                             + ") WITH COMMENT='traced sessions'",
+                                                             + ") WITH COMMENT='traced sessions' AND default_time_to_live=86400",
                                                              Tracing.TRACE_KS);
 
     public static final CFMetaData TraceEventsCf = compile("CREATE TABLE " + Tracing.EVENTS_CF + " ("
@@ -228,7 +228,7 @@ public final class CFMetaData
                                                            + "activity text,"
                                                            + "source_elapsed int,"
                                                            + "PRIMARY KEY (session_id, event_id)"
-                                                           + ")",
+                                                           + ") WITH default_time_to_live=86400",
                                                            Tracing.TRACE_KS);
 
     public static final CFMetaData BatchlogCf = compile("CREATE TABLE " + SystemKeyspace.BATCHLOG_CF + " ("
@@ -390,7 +390,7 @@ public final class CFMetaData
     private volatile Double bloomFilterFpChance = null;
     private volatile Caching caching = DEFAULT_CACHING_STRATEGY;
     private volatile int indexInterval = DEFAULT_INDEX_INTERVAL;
-    private int memtableFlushPeriod = 0;
+    private volatile int memtableFlushPeriod = 0;
     private volatile int defaultTimeToLive = DEFAULT_DEFAULT_TIME_TO_LIVE;
     private volatile SpeculativeRetry speculativeRetry = DEFAULT_SPECULATIVE_RETRY;
     private volatile boolean populateIoCacheOnFlush = DEFAULT_POPULATE_IO_CACHE_ON_FLUSH;

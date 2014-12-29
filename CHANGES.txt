@@ -1,3 +1,58 @@
+2.0.12:
+ * Increase bf true positive count on key cache hit (CASSANDRA-8525)
+ * Move MeteredFlusher to its own thread (CASSANDRA-8485)
+ * Fix non-distinct results in DISTNCT queries on static columns when
+   paging is enabled (CASSANDRA-8087)
+ * Move all hints related tasks to hints internal executor (CASSANDRA-8285)
+ * Fix paging for multi-partition IN queries (CASSANDRA-8408)
+ * Fix MOVED_NODE topology event never being emitted when a node
+   moves its token (CASSANDRA-8373)
+ * Fix validation of indexes in COMPACT tables (CASSANDRA-8156)
+ * Avoid StackOverflowError when a large list of IN values
+   is used for a clustering column (CASSANDRA-8410)
+ * Fix NPE when writetime() or ttl() calls are wrapped by
+   another function call (CASSANDRA-8451)
+ * Fix NPE after dropping a keyspace (CASSANDRA-8332)
+ * Fix error message on read repair timeouts (CASSANDRA-7947)
+ * Default DTCS base_time_seconds changed to 60 (CASSANDRA-8417)
+ * Refuse Paxos operation with more than one pending endpoint (CASSANDRA-8346)
+ * Throw correct exception when trying to bind a keyspace or table
+   name (CASSANDRA-6952)
+ * Make HHOM.compact synchronized (CASSANDRA-8416)
+ * cancel latency-sampling task when CF is dropped (CASSANDRA-8401)
+ * don't block SocketThread for MessagingService (CASSANDRA-8188)
+ * Increase quarantine delay on replacement (CASSANDRA-8260)
+ * Expose off-heap memory usage stats (CASSANDRA-7897)
+ * Ignore Paxos commits for truncated tables (CASSANDRA-7538)
+ * Validate size of indexed column values (CASSANDRA-8280)
+ * Make LCS split compaction results over all data directories (CASSANDRA-8329)
+ * Fix some failing queries that use multi-column relations
+   on COMPACT STORAGE tables (CASSANDRA-8264)
+ * Fix InvalidRequestException with ORDER BY (CASSANDRA-8286)
+ * Disable SSLv3 for POODLE (CASSANDRA-8265)
+ * Fix millisecond timestamps in Tracing (CASSANDRA-8297)
+ * Include keyspace name in error message when there are insufficient
+   live nodes to stream from (CASSANDRA-8221)
+ * Avoid overlap in L1 when L0 contains many nonoverlapping
+   sstables (CASSANDRA-8211)
+ * Improve PropertyFileSnitch logging (CASSANDRA-8183)
+ * Abort liveRatio calculation if the memtable is flushed (CASSANDRA-8164)
+ * Correctly handle non-text column names in cql3 (CASSANDRA-8178)
+ * Fix deletion for indexes on primary key columns (CASSANDRA-8206)
+ * Add 'nodetool statusgossip' (CASSANDRA-8125)
+ * Improve client notification that nodes are ready for requests (CASSANDRA-7510)
+ * Handle negative timestamp in writetime method (CASSANDRA-8139)
+ * Pig: Remove errant LIMIT clause in CqlNativeStorage (CASSANDRA-8166)
+ * Throw ConfigurationException when hsha is used with the default
+   rpc_max_threads setting of 'unlimited' (CASSANDRA-8116)
+ * Allow concurrent writing of the same table in the same JVM using
+   CQLSSTableWriter (CASSANDRA-7463)
+ * Fix totalDiskSpaceUsed calculation (CASSANDRA-8205)
+ * Add DC-aware sequential repair (CASSANDRA-8193)
+ * Improve JBOD disk utilization (CASSANDRA-7386)
+ * Use live sstables in snapshot repair if possible (CASSANDRA-8312)
+
+
 2.0.11:
  * Reject conditions on DELETE unless full PK is given (CASSANDRA-6430)
  * Properly reject the token function DELETE (CASSANDRA-7747)

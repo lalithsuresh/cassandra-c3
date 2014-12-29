@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import com.google.common.base.Function;
 import com.google.common.base.Throwables;
+import org.apache.cassandra.utils.*;
 import org.cliffc.high_scale_lib.NonBlockingHashSet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,7 +40,6 @@ import org.apache.cassandra.io.sstable.SSTableMetadata;
 import org.apache.cassandra.io.sstable.SSTableReader;
 import org.apache.cassandra.io.sstable.SSTableWriter;
 import org.apache.cassandra.io.util.DiskAwareRunnable;
-import org.apache.cassandra.utils.Allocator;
 import org.github.jamm.MemoryMeter;
 
 public class Memtable
@@ -160,9 +160,9 @@ public class Memtable
      * (CFS handles locking to avoid submitting an op
      *  to a flushing memtable.  Any other way is unsafe.)
     */
-    void put(DecoratedKey key, ColumnFamily columnFamily, SecondaryIndexManager.Updater indexer)
+    long put(DecoratedKey key, ColumnFamily columnFamily, SecondaryIndexManager.Updater indexer)
     {
-        resolve(key, columnFamily, indexer);
+        return resolve(key, columnFamily, indexer);
     }
 
     public void maybeUpdateLiveRatio()
@@ -202,7 +202,7 @@ public class Memtable
         meterExecutor.submit(new MeteringRunnable(cfs));
     }
 
-    private void resolve(DecoratedKey key, ColumnFamily cf, SecondaryIndexManager.Updater indexer)
+    private long resolve(DecoratedKey key, ColumnFamily cf, SecondaryIndexManager.Updater indexer)
     {
         AtomicSortedColumns previous = rows.get(key);
 
@@ -215,9 +215,10 @@ public class Memtable
                 previous = empty;
         }
 
-        long sizeDelta = previous.addAllWithSizeDelta(cf, allocator, localCopyFunction, indexer);
-        currentSize.addAndGet(sizeDelta);
+        final Pair<Long, Long> pair = previous.addAllWithSizeDelta(cf, allocator, localCopyFunction, indexer);
+        currentSize.addAndGet(pair.left);
         currentOperations.addAndGet(cf.getColumnCount() + (cf.isMarkedForDelete() ? 1 : 0) + cf.deletionInfo().rangeCount());
+        return pair.right;
     }
 
     // for debugging
@@ -335,10 +336,12 @@ public class Memtable
             return estimatedSize;
         }
 
-        protected void runWith(File sstableDirectory) throws Exception
+        protected void runMayThrow() throws Exception
         {
+            long writeSize = getExpectedWriteSize();
+            Directories.DataDirectory dataDirectory = getWriteDirectory(writeSize);
+            File sstableDirectory = cfs.directories.getLocationForDisk(dataDirectory);
             assert sstableDirectory != null : "Flush task is not bound to any disk";
-
             SSTableReader sstable = writeSortedContents(context, sstableDirectory);
             cfs.replaceFlushed(Memtable.this, sstable);
             latch.countDown();
@@ -449,6 +452,12 @@ public class Memtable
                 {
                     deepSize += memtable.meter.measureDeep(entry.getKey()) + memtable.meter.measureDeep(entry.getValue());
                     objects += entry.getValue().getColumnCount();
+
+                    if (memtable != cfs.getMemtableThreadSafe())
+                    {
+                        // this memtable is flushing or already flushed
+                        return;
+                    }
                 }
                 double newRatio = (double) deepSize / memtable.currentSize.get();
 

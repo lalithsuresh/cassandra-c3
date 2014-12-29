@@ -107,6 +107,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
 
     public final ColumnFamilyMetrics metric;
     public volatile long sampleLatencyNanos;
+    private final ScheduledFuture<?> latencyCalculator;
 
     public void reload()
     {
@@ -292,7 +293,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
             throw new RuntimeException(e);
         }
         logger.debug("retryPolicy for {} is {}", name, this.metadata.getSpeculativeRetry());
-        StorageService.optionalTasks.scheduleWithFixedDelay(new Runnable()
+        latencyCalculator = StorageService.optionalTasks.scheduleWithFixedDelay(new Runnable()
         {
             public void run()
             {
@@ -331,8 +332,8 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
             logger.warn("Failed unregistering mbean: " + mbeanName, e);
         }
 
+        latencyCalculator.cancel(false);
         compactionStrategy.shutdown();
-
         SystemKeyspace.removeTruncationRecord(metadata.cfId);
         data.unreferenceSSTables();
         indexManager.invalidate();
@@ -897,9 +898,11 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
         long start = System.nanoTime();
 
         Memtable mt = getMemtableThreadSafe();
-        mt.put(key, columnFamily, indexer);
+        final long timeDelta = mt.put(key, columnFamily, indexer);
         maybeUpdateRowCache(key);
         metric.writeLatency.addNano(System.nanoTime() - start);
+        if(timeDelta < Long.MAX_VALUE)
+            metric.colUpdateTimeDeltaHistogram.update(timeDelta);
         mt.maybeUpdateLiveRatio();
     }
 
@@ -1646,12 +1649,12 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
     /**
      * Allows generic range paging with the slice column filter.
      * Typically, suppose we have rows A, B, C ... Z having each some columns in [1, 100].
-     * And suppose we want to page throught the query that for all rows returns the columns
+     * And suppose we want to page through the query that for all rows returns the columns
      * within [25, 75]. For that, we need to be able to do a range slice starting at (row r, column c)
      * and ending at (row Z, column 75), *but* that only return columns in [25, 75].
      * That is what this method allows. The columnRange is the "window" of  columns we are interested
      * in each row, and columnStart (resp. columnEnd) is the start (resp. end) for the first
-     * (resp. end) requested row.
+     * (resp. last) requested row.
      */
     public ExtendedFilter makeExtendedFilter(AbstractBounds<RowPosition> keyRange,
                                              SliceQueryFilter columnRange,
@@ -1691,6 +1694,8 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
             assert columnFilter instanceof SliceQueryFilter;
             SliceQueryFilter sfilter = (SliceQueryFilter)columnFilter;
             assert sfilter.slices.length == 1;
+            // create a new SliceQueryFilter that selects all cells, but pass the original slice start and finish
+            // through to DataRange.Paging to be used on the first and last partitions
             SliceQueryFilter newFilter = new SliceQueryFilter(ColumnSlice.ALL_COLUMNS_ARRAY, sfilter.isReversed(), sfilter.count);
             dataRange = new DataRange.Paging(range, newFilter, sfilter.start(), sfilter.finish(), metadata.comparator);
         }
@@ -1852,14 +1857,14 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
                 if (sstable == null || !sstable.acquireReference())
                 {
                     if (logger.isDebugEnabled())
-                        logger.debug("using snapshot sstable " + entries.getKey());
+                        logger.debug("using snapshot sstable {}", entries.getKey());
                     sstable = SSTableReader.open(entries.getKey(), entries.getValue(), metadata, partitioner);
                     // This is technically not necessary since it's a snapshot but makes things easier
                     sstable.acquireReference();
                 }
                 else if (logger.isDebugEnabled())
                 {
-                    logger.debug("using active sstable " + entries.getKey());
+                    logger.debug("using active sstable {}", entries.getKey());
                 }
                 readers.add(sstable);
             }
@@ -1905,11 +1910,6 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
     {
         List<File> snapshotDirs = directories.getCFDirectories();
         Directories.clearSnapshot(snapshotName, snapshotDirs);
-    }
-
-    public boolean hasUnreclaimedSpace()
-    {
-        return getLiveDiskSpaceUsed() < getTotalDiskSpaceUsed();
     }
 
     public long getTotalDiskSpaceUsed()
@@ -2195,6 +2195,21 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean
     public long getBloomFilterDiskSpaceUsed()
     {
         return metric.bloomFilterDiskSpaceUsed.value();
+    }
+
+    public long getBloomFilterOffHeapMemoryUsed()
+    {
+        return metric.bloomFilterOffHeapMemoryUsed.value();
+    }
+
+    public long getIndexSummaryOffHeapMemoryUsed()
+    {
+        return metric.indexSummaryOffHeapMemoryUsed.value();
+    }
+
+    public long getCompressionMetadataOffHeapMemoryUsed()
+    {
+        return metric.compressionMetadataOffHeapMemoryUsed.value();
     }
 
     @Override

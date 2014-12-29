@@ -40,19 +40,19 @@ public class CreateIndexStatement extends SchemaAlteringStatement
     private static final Logger logger = LoggerFactory.getLogger(CreateIndexStatement.class);
 
     private final String indexName;
-    private final ColumnIdentifier columnName;
+    private final ColumnIdentifier.Raw rawColumnName;
     private final IndexPropDefs properties;
     private final boolean ifNotExists;
 
     public CreateIndexStatement(CFName name,
                                 String indexName,
-                                ColumnIdentifier columnName,
+                                ColumnIdentifier.Raw rawColumnName,
                                 IndexPropDefs properties,
                                 boolean ifNotExists)
     {
         super(name);
         this.indexName = indexName;
-        this.columnName = columnName;
+        this.rawColumnName = rawColumnName;
         this.properties = properties;
         this.ifNotExists = ifNotExists;
     }
@@ -68,6 +68,7 @@ public class CreateIndexStatement extends SchemaAlteringStatement
         if (cfm.getDefaultValidator().isCommutative())
             throw new InvalidRequestException("Secondary indexes are not supported on counter tables");
 
+        ColumnIdentifier columnName = rawColumnName.prepare(cfm);
         ColumnDefinition cd = cfm.getColumnDefinition(columnName.key);
 
         if (cd == null)
@@ -84,8 +85,8 @@ public class CreateIndexStatement extends SchemaAlteringStatement
         properties.validate();
 
         // TODO: we could lift that limitation
-        if (cfm.getCfDef().isCompact && cd.type != ColumnDefinition.Type.REGULAR)
-            throw new InvalidRequestException(String.format("Secondary index on %s column %s is not yet supported for compact table", cd.type, columnName));
+        if ((cfm.getCfDef().isCompact || !cfm.getCfDef().isComposite) && cd.type != ColumnDefinition.Type.REGULAR)
+            throw new InvalidRequestException("Secondary indexes are not supported on PRIMARY KEY columns in COMPACT STORAGE tables");
 
         // It would be possible to support 2ndary index on static columns (but not without modifications of at least ExtendedFilter and
         // CompositesIndex) and maybe we should, but that means a query like:
@@ -105,8 +106,9 @@ public class CreateIndexStatement extends SchemaAlteringStatement
 
     public boolean announceMigration() throws RequestValidationException
     {
-        logger.debug("Updating column {} definition for index {}", columnName, indexName);
         CFMetaData cfm = Schema.instance.getCFMetaData(keyspace(), columnFamily()).clone();
+        ColumnIdentifier columnName = rawColumnName.prepare(cfm);
+        logger.debug("Updating column {} definition for index {}", columnName, indexName);
         ColumnDefinition cd = cfm.getColumnDefinition(columnName.key);
 
         if (cd.getIndexType() != null && ifNotExists)

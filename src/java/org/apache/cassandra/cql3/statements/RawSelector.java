@@ -22,12 +22,17 @@ import org.apache.cassandra.cql3.ColumnIdentifier;
 
 public class RawSelector
 {
-    public final Selectable selectable;
+    public final Selectable.Raw selectable;
     public final ColumnIdentifier alias;
 
-    public RawSelector(Selectable selectable, ColumnIdentifier alias)
+    public RawSelector(Selectable.Raw selectable, ColumnIdentifier alias)
     {
         this.selectable = selectable;
         this.alias = alias;
+    }
+
+    public boolean processesSelection()
+    {
+        return selectable.processesSelection();
     }
 }

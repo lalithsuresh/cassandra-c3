@@ -18,12 +18,25 @@
  */
 package org.apache.cassandra.cql3.statements;
 
+import java.util.ArrayList;
 import java.util.List;
 
+import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.cql3.ColumnIdentifier;
 
 public interface Selectable
 {
+
+    public static interface Raw
+    {
+        public Selectable prepare(CFMetaData cfm);
+
+        /**
+         * Returns true if any processing is performed on the selected column.
+         **/
+        public boolean processesSelection();
+    }
+
     public static class WritetimeOrTTL implements Selectable
     {
         public final ColumnIdentifier id;
@@ -39,6 +52,28 @@ public interface Selectable
         public String toString()
         {
             return (isWritetime ? "writetime" : "ttl") + "(" + id + ")";
+        }
+
+        public static class Raw implements Selectable.Raw
+        {
+            private final ColumnIdentifier.Raw id;
+            private final boolean isWritetime;
+
+            public Raw(ColumnIdentifier.Raw id, boolean isWritetime)
+            {
+                this.id = id;
+                this.isWritetime = isWritetime;
+            }
+
+            public WritetimeOrTTL prepare(CFMetaData cfm)
+            {
+                return new WritetimeOrTTL(id.prepare(cfm), isWritetime);
+            }
+
+            public boolean processesSelection()
+            {
+                return true;
+            }
         }
     }
 
@@ -64,6 +99,31 @@ public interface Selectable
                 sb.append(args.get(i));
             }
             return sb.append(")").toString();
+        }
+
+        public static class Raw implements Selectable.Raw
+        {
+            private final String functionName;
+            private final List<Selectable.Raw> args;
+
+            public Raw(String functionName, List<Selectable.Raw> args)
+            {
+                this.functionName = functionName;
+                this.args = args;
+            }
+
+            public WithFunction prepare(CFMetaData cfm)
+            {
+                List<Selectable> preparedArgs = new ArrayList<>(args.size());
+                for (Selectable.Raw arg : args)
+                    preparedArgs.add(arg.prepare(cfm));
+                return new WithFunction(functionName, preparedArgs);
+            }
+
+            public boolean processesSelection()
+            {
+                return true;
+            }
         }
     }
 }
