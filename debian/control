@@ -1,5 +1,5 @@
 Source: cassandra
-Section: misc
+Section: main
 Priority: extra
 Maintainer: Eric Evans <eevans@apache.org>
 Uploaders: Sylvain Lebresne <slebresne@apache.org>
