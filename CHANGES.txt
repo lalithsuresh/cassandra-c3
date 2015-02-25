@@ -1,4 +1,17 @@
 2.0.12:
+ * Use more efficient slice size for querying internal secondary
+   index tables (CASSANDRA-8550)
+ * Fix potentially returning deleted rows with range tombstone (CASSANDRA-8558)
+ * Make sure we unmark compacting after scrub/cleanup etc (CASSANDRA-8548)
+ * Check for available disk space before starting a compaction (CASSANDRA-8562)
+ * Fix DISTINCT queries with LIMITs or paging when some partitions
+   contain only tombstones (CASSANDRA-8490)
+ * Introduce background cache refreshing to permissions cache
+   (CASSANDRA-8194)
+ * Fix race condition in StreamTransferTask that could lead to
+   infinite loops and premature sstable deletion (CASSANDRA-7704)
+ * Add an extra version check to MigrationTask (CASSANDRA-8462)
+ * Ensure SSTableWriter cleans up properly after failure (CASSANDRA-8499)
  * Increase bf true positive count on key cache hit (CASSANDRA-8525)
  * Move MeteredFlusher to its own thread (CASSANDRA-8485)
  * Fix non-distinct results in DISTNCT queries on static columns when
@@ -15,7 +28,7 @@
  * Fix NPE after dropping a keyspace (CASSANDRA-8332)
  * Fix error message on read repair timeouts (CASSANDRA-7947)
  * Default DTCS base_time_seconds changed to 60 (CASSANDRA-8417)
- * Refuse Paxos operation with more than one pending endpoint (CASSANDRA-8346)
+ * Refuse Paxos operation with more than one pending endpoint (CASSANDRA-8346, 8640)
  * Throw correct exception when trying to bind a keyspace or table
    name (CASSANDRA-6952)
  * Make HHOM.compact synchronized (CASSANDRA-8416)
@@ -51,6 +64,7 @@
  * Add DC-aware sequential repair (CASSANDRA-8193)
  * Improve JBOD disk utilization (CASSANDRA-7386)
  * Use live sstables in snapshot repair if possible (CASSANDRA-8312)
+ * Fix hints serialized size calculation (CASSANDRA-8587)
 
 
 2.0.11:
