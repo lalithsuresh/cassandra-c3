@@ -1,3 +1,9 @@
+sofie-cassandra (2.0.12) unstable; urgency=medium
+
+  * Change name
+
+ -- Sofie Thorsen <thorsen@spotify.com> Wed, 01 Apr 2015 11:46:30 +0200
+
 cassandra (2.0.12) unstable; urgency=medium
 
   * New release 
