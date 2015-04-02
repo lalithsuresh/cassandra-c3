@@ -51,6 +51,7 @@ public class ResponseVerbHandler implements IVerbHandler
             //TODO: Should we add latency only in success cases?
             MessagingService.instance().maybeAddLatency(cb, message.from, latency);
             cb.response(message);
+            MessagingService.instance().updateMetrics(message, callbackInfo, latency);
         }
     }
 }

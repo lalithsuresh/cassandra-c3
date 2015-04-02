@@ -47,11 +47,11 @@ public class ReadCallback<TMessage, TResolved> implements IAsyncCallback<TMessag
 {
     protected static final Logger logger = LoggerFactory.getLogger( ReadCallback.class );
 
+    List<InetAddress> endpoints;
     public final IResponseResolver<TMessage, TResolved> resolver;
     private final SimpleCondition condition = new SimpleCondition();
     final long start;
     final int blockfor;
-    final List<InetAddress> endpoints;
     private final IReadCommand command;
     private final ConsistencyLevel consistencyLevel;
     private final AtomicInteger received = new AtomicInteger(0);

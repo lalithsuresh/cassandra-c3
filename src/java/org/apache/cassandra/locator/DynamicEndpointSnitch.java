@@ -27,6 +27,7 @@ import java.util.concurrent.TimeUnit;
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
 
+import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.service.StorageService;
@@ -142,7 +143,7 @@ public class DynamicEndpointSnitch extends AbstractEndpointSnitch implements ILa
     public void sortByProximity(final InetAddress address, List<InetAddress> addresses)
     {
         assert address.equals(FBUtilities.getBroadcastAddress()); // we only know about ourself
-        if (BADNESS_THRESHOLD == 0)
+        if (BADNESS_THRESHOLD == 0 || !DatabaseDescriptor.getScoreStrategy().equals(Config.SelectionStrategy.default_strategy))
         {
             sortByProximityWithScore(address, addresses);
         }
@@ -189,19 +190,27 @@ public class DynamicEndpointSnitch extends AbstractEndpointSnitch implements ILa
         }
     }
 
-    public int compareEndpoints(InetAddress target, InetAddress a1, InetAddress a2)
-    {
-        Double scored1 = scores.get(a1);
-        Double scored2 = scores.get(a2);
-        
-        if (scored1 == null)
-        {
+    public int compareEndpoints(InetAddress target, InetAddress a1, InetAddress a2) {
+        Double scored1 = null;
+        Double scored2 = null;
+
+        switch (DatabaseDescriptor.getScoreStrategy()){
+            case c3_strategy:
+                scored1 = MessagingService.instance().getScore(a1);
+                scored2 = MessagingService.instance().getScore(a2);
+                break;
+            case default_strategy:
+                scored1 = scores.get(a1);
+                scored2 = scores.get(a2);
+                break;
+        }
+
+        if (scored1 == null) {
             scored1 = 0.0;
             receiveTiming(a1, 0);
         }
 
-        if (scored2 == null)
-        {
+        if (scored2 == null) {
             scored2 = 0.0;
             receiveTiming(a2, 0);
         }

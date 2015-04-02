@@ -37,6 +37,9 @@ import com.google.common.collect.Lists;
 import org.cliffc.high_scale_lib.NonBlockingHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import akka.actor.ActorRef;
+import org.apache.cassandra.c3.HostTracker;
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.concurrent.StageManager;
 import org.apache.cassandra.concurrent.TracingAwareExecutorService;
@@ -300,6 +303,8 @@ public final class MessagingService implements MessagingServiceMBean
     // protocol versions of the other nodes in the cluster
     private final ConcurrentMap<InetAddress, Integer> versions = new NonBlockingHashMap<InetAddress, Integer>();
 
+    private final HostTracker tracker = new HostTracker();
+
     private static class MSHandle
     {
         public static final MessagingService instance = new MessagingService();
@@ -336,6 +341,13 @@ public final class MessagingService implements MessagingServiceMBean
                 maybeAddLatency(expiredCallbackInfo.callback, expiredCallbackInfo.target, pair.right.timeout);
                 ConnectionMetrics.totalTimeouts.mark();
                 getConnectionPool(expiredCallbackInfo.target).incrementTimeout();
+
+                if (callbackDeserializers.get(Verb.READ).equals(expiredCallbackInfo.serializer))
+                {
+                    int count = tracker.get(expiredCallbackInfo.target).decrementAndGet();
+                    logger.trace("Decrementing pendingJob count Endpoint: {}, Count: {} ", expiredCallbackInfo.target, count);
+                }
+
                 if (expiredCallbackInfo.isFailureCallback())
                 {
                     StageManager.getStage(Stage.INTERNAL_RESPONSE).submit(new Runnable() {
@@ -611,6 +623,16 @@ public final class MessagingService implements MessagingServiceMBean
     public int sendRR(MessageOut message, InetAddress to, IAsyncCallback cb, long timeout, boolean failureCallback)
     {
         int id = addCallback(cb, message, to, timeout, failureCallback);
+
+        if (message.verb.equals(Verb.READ))
+        {
+            if (!tracker.containsKey(to))
+            {
+                tracker.put(to, new AtomicInteger(0));
+            }
+            tracker.get(to).incrementAndGet();
+        }
+
         sendOneWay(failureCallback ? message.withParameter(FAILURE_CALLBACK_PARAM, ONE_BYTE) : message, id, to);
         return id;
     }
@@ -1049,5 +1071,33 @@ public final class MessagingService implements MessagingServiceMBean
             result.put(ip, recent);
         }
         return result;
+    }
+
+    public void updateMetrics(MessageIn message, CallbackInfo callbackInfo, long latency)
+    {
+        if (callbackDeserializers.get(Verb.READ).equals(callbackInfo.serializer))
+        {
+            tracker.updateMetrics(message, latency);
+        }
+    }
+
+    public double getScore(InetAddress endpoint)
+    {
+        return tracker.getScore(endpoint);
+    }
+
+    public AtomicInteger getPendingRequestsCounter(InetAddress endpoint)
+    {
+        return tracker.getPendingRequestsCounter(endpoint);
+    }
+
+    public ActorRef getActor(List<InetAddress> endpoints)
+    {
+        return tracker.getActor(endpoints);
+    }
+
+    public double sendingRateTryAcquire(InetAddress endpoint)
+    {
+        return tracker.sendingRateTryAcquire(endpoint);
     }
 }

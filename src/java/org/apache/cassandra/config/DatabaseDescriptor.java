@@ -1446,4 +1446,14 @@ public class DatabaseDescriptor
         String arch = System.getProperty("os.arch");
         return arch.contains("64") || arch.contains("sparcv9");
     }
+
+    public static Config.SelectionStrategy getScoreStrategy()
+    {
+        return conf.score_strategy;
+    }
+
+    public static void setScoreStrategy(Config.SelectionStrategy score_strategy)
+    {
+        conf.score_strategy = score_strategy;
+    }
 }

@@ -201,6 +201,8 @@ public class Config
     public volatile int tombstone_warn_threshold = 1000;
     public volatile int tombstone_failure_threshold = 100000;
 
+    public SelectionStrategy score_strategy = SelectionStrategy.default_strategy;
+
     private static final CsvPreference STANDARD_SURROUNDING_SPACES_NEED_QUOTES = new CsvPreference.Builder(CsvPreference.STANDARD_PREFERENCE)
                                                                                                   .surroundingSpacesNeedQuotes(true).build();
 
@@ -292,5 +294,10 @@ public class Config
     public static enum RequestSchedulerId
     {
         keyspace
+    }
+
+    public static enum SelectionStrategy {
+        c3_strategy,
+        default_strategy
     }
 }

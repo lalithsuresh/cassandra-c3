@@ -19,6 +19,7 @@ package org.apache.cassandra.service;
 
 import java.net.InetAddress;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -26,9 +27,12 @@ import com.google.common.collect.Iterables;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import akka.actor.ActorRef;
 import org.apache.cassandra.concurrent.Stage;
 import org.apache.cassandra.concurrent.StageManager;
 import org.apache.cassandra.config.CFMetaData.SpeculativeRetry.RetryType;
+import org.apache.cassandra.config.Config;
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.config.ReadRepairDecision;
 import org.apache.cassandra.db.ColumnFamilyStore;
@@ -58,9 +62,9 @@ public abstract class AbstractReadExecutor
     private static final Logger logger = LoggerFactory.getLogger(AbstractReadExecutor.class);
 
     protected final ReadCommand command;
-    protected final List<InetAddress> targetReplicas;
     protected final RowDigestResolver resolver;
     protected final ReadCallback<ReadResponse, Row> handler;
+    protected List<InetAddress> targetReplicas;
 
     AbstractReadExecutor(ReadCommand command, ConsistencyLevel consistencyLevel, List<InetAddress> targetReplicas)
     {
@@ -68,6 +72,12 @@ public abstract class AbstractReadExecutor
         this.targetReplicas = targetReplicas;
         resolver = new RowDigestResolver(command.ksName, command.key);
         handler = new ReadCallback<>(resolver, consistencyLevel, command, targetReplicas);
+    }
+
+    void execute()
+    {
+        ActorRef actor = MessagingService.instance().getActor(handler.endpoints);
+        actor.tell(this, null);
     }
 
     private static boolean isLocalRequest(InetAddress replica)
@@ -326,5 +336,57 @@ public abstract class AbstractReadExecutor
                 makeDigestRequests(targetReplicas.subList(2, targetReplicas.size()));
             cfs.metric.speculativeRetries.inc();
         }
+    }
+
+    public double pushRead()
+    {
+        // Block until the upstream queues look all right if we're using the c3 strategy
+        if (DatabaseDescriptor.getScoreStrategy().equals(Config.SelectionStrategy.c3_strategy))
+        {
+            List<InetAddress> newEndpointList = StorageProxy.getLiveSortedEndpoints(Keyspace.open(command.ksName), command.key);
+            int originalSize = handler.endpoints.size();
+            boolean shouldWait = true;
+            int dataEndpointIndex;
+
+            // This is our backpressure knob. If we exceed the rate, bail.
+            // Every token bucket's tryAcquire() gives us the duration we need
+            // to wait until the rate is available again. If all token buckets
+            // are empty, then we tell the corresponding actor to wait for the
+            // minimum duration required until one of the rate limiters is available.
+            double minimumDurationToWait = Double.MAX_VALUE;
+            for (int i = 0; i < newEndpointList.size(); i++)
+            {
+                final InetAddress endpoint = newEndpointList.get(i);
+                double timeToNextRefill = 0L;
+                if (!endpoint.equals(FBUtilities.getBroadcastAddress()))
+                {
+                    timeToNextRefill = MessagingService.instance().sendingRateTryAcquire(endpoint);
+                }
+
+                if (timeToNextRefill == 0L)
+                {
+                    dataEndpointIndex = i;
+                    shouldWait = false;
+
+                    // We found the best endpoint that is within rate, put it first in the list
+                    Collections.<InetAddress>swap(newEndpointList, dataEndpointIndex, 0);
+                    break;
+                }
+
+                minimumDurationToWait = Math.min(minimumDurationToWait, timeToNextRefill);
+            }
+
+            if (shouldWait)
+            {
+                return minimumDurationToWait;
+            }
+
+            // We're within our expected rate. Update endpoints.
+            this.targetReplicas = newEndpointList.subList(0, originalSize);
+            handler.endpoints = this.targetReplicas;
+        }
+
+        executeAsync();
+        return 0L;
     }
 }
