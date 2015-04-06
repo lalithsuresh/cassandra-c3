@@ -61,8 +61,8 @@ public class ReadVerbHandler implements IVerbHandler<ReadCommand>
             return;
         }
 
-        int queueSize = counter.decrementAndGet();
         long serviceTimeInNanos = System.nanoTime() - start;
+        int queueSize = counter.decrementAndGet();
 
         MessageOut<ReadResponse> reply =
         new MessageOut<>(MessagingService.Verb.REQUEST_RESPONSE,

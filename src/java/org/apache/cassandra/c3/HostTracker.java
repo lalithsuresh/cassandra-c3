@@ -146,8 +146,8 @@ public class HostTracker
         logger.trace("Decrementing pendingJob count Endpoint: {}, Count: {} ", message.from, count);
 
         int queueSize = ByteBuffer.wrap((byte[]) message.parameters.get(C3Metrics.QSZ)).getInt();
-        double serviceTimeInMillis = ((double) ByteBuffer.wrap((byte[]) message.parameters.get(C3Metrics.MU)).getLong()) / 1000000.0;
-        double latencyInMillis = ((double) latency) / 1000000.0;
+        double serviceTimeInMillis = ByteBuffer.wrap((byte[]) message.parameters.get(C3Metrics.MU)).getLong() / 1000000.0;
+        double latencyInMillis = latency / 1000000.0;
 
         ScoreTracker scoreTracker = getScoreTracker(message.from);
         scoreTracker.updateNodeScore(queueSize, serviceTimeInMillis, latencyInMillis);
