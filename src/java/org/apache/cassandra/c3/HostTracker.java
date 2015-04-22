@@ -62,6 +62,9 @@ public class HostTracker
     }
 
     public ScoreTracker getScoreTracker(InetAddress endpoint) {
+        if (!scoreTrackers.containsKey(endpoint)) {
+            scoreTrackers.putIfAbsent(endpoint, new ScoreTracker());
+        }
         return scoreTrackers.get(endpoint);
     }
 

@@ -128,7 +128,8 @@ public class RateController
             }
             else
             {
-                currentRate = eventCount;
+                final double alpha = (now - lastTick) / (float) interval;
+                currentRate = alpha * ((double) eventCount) + (1 - alpha) * currentRate;
                 lastTick = now;
                 eventCount = 0;
             }
