@@ -1467,4 +1467,15 @@ public class DatabaseDescriptor
     {
         conf.c3_rate_limiter_max_tokens = c3_rate_limiter_max_tokens;
     }
+
+
+    public static long getC3RateIntervalMs()
+    {
+        return conf.c3_rate_interval_ms;
+    }
+
+    public static void setC3RateIntervalMs(long c3_rate_interval_ms)
+    {
+        conf.c3_rate_interval_ms = c3_rate_interval_ms;
+    }
 }

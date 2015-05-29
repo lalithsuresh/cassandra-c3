@@ -1,12 +1,15 @@
 package org.apache.cassandra.c3;
 
+import org.apache.cassandra.config.DatabaseDescriptor;
+
 import java.net.InetAddress;
 
 public class RateController
 {
     // Constants for send/receive rate tracking
-    private static final long RATE_INTERVAL_MS = 20;
     private static final long RECEIVE_RATE_INITIAL = 100;
+    private static final long RATE_INTERVAL_MS = DatabaseDescriptor.getC3RateIntervalMs();
+    private static final double RATE_LIMITER_MAX_TOKENS = DatabaseDescriptor.getC3RateLimiterMaxTokens();
 
     // Constants for cubic function
     private static final double CUBIC_BETA = 0.2;
@@ -26,7 +29,7 @@ public class RateController
 
     public RateController()
     {
-        this.sendingRateLimiter = new SimpleRateLimiter(1, RATE_INTERVAL_MS, 200);
+        this.sendingRateLimiter = new SimpleRateLimiter(1, RATE_INTERVAL_MS, RATE_LIMITER_MAX_TOKENS);
         this.receiveRateTracker = new SlottedRateTracker(RECEIVE_RATE_INITIAL, RATE_INTERVAL_MS);
     }
 
