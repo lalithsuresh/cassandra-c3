@@ -203,6 +203,8 @@ public class Config
 
     public SelectionStrategy score_strategy = SelectionStrategy.default_strategy;
 
+    public double c3_rate_limiter_max_tokens = 200;
+
     private static final CsvPreference STANDARD_SURROUNDING_SPACES_NEED_QUOTES = new CsvPreference.Builder(CsvPreference.STANDARD_PREFERENCE)
                                                                                                   .surroundingSpacesNeedQuotes(true).build();
 

@@ -26,7 +26,7 @@ public class RateController
 
     public RateController()
     {
-        this.sendingRateLimiter = new SimpleRateLimiter(1, RATE_INTERVAL_MS, 50);
+        this.sendingRateLimiter = new SimpleRateLimiter(1, RATE_INTERVAL_MS, 200);
         this.receiveRateTracker = new SlottedRateTracker(RECEIVE_RATE_INITIAL, RATE_INTERVAL_MS);
     }
 
@@ -40,7 +40,7 @@ public class RateController
             && (now - timeOfLastRateIncrease > CUBIC_HYSTERISIS_DURATION))
         {
             Rmax = currentSendingRate;
-            sendingRateLimiter.setRate(Math.max(currentSendingRate * CUBIC_BETA, 0.001));
+            sendingRateLimiter.setRate(Math.max(currentSendingRate * CUBIC_BETA, 0.1));
             timeOfLastRateDecrease = now;
         }
         else if (currentSendingRate < currentReceiveRate)
