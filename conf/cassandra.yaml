@@ -706,3 +706,5 @@ preheat_kernel_page_cache: false
 # Score strategy when choosing replicas. Use default_strategy or c3_strategy
 dynamic_snitch: true
 score_strategy: c3_strategy
+c3_rate_limiter_max_tokens: 400
+c3_rate_interval_ms: 1000
