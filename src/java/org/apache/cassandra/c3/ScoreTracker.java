@@ -20,7 +20,7 @@ public class ScoreTracker
         serviceTimeEMA = getEMA(serviceTime, serviceTimeEMA);
         responseTimeEMA = getEMA(responseTime, responseTimeEMA);
 
-        assert serviceTime < latency;
+        assert serviceTime <= latency;
     }
 
     private synchronized double getEMA(double value, double previousEMA)
