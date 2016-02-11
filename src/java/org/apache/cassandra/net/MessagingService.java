@@ -1081,6 +1081,11 @@ public final class MessagingService implements MessagingServiceMBean
         }
     }
 
+    public void updateMetricsLocal(int qsz, long serviceTime)
+    {
+        tracker.updateMetricsLocal(qsz, serviceTime);
+    }
+
     public double getScore(InetAddress endpoint)
     {
         return tracker.getScore(endpoint);

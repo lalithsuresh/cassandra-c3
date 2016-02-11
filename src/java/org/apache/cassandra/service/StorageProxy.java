@@ -1439,9 +1439,11 @@ public class StorageProxy implements StorageProxyMBean
             Keyspace keyspace = Keyspace.open(command.ksName);
             Row r = command.getRow(keyspace);
             ReadResponse result = ReadVerbHandler.getResponse(command, r);
-            MessagingService.instance().addLatency(FBUtilities.getBroadcastAddress(), TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start));
+            long serviceTimeInNanos = System.nanoTime() - start;
+            MessagingService.instance().addLatency(FBUtilities.getBroadcastAddress(), TimeUnit.NANOSECONDS.toMillis(serviceTimeInNanos));
             handler.response(result);
-            MessagingService.instance().getPendingRequestsCounter(FBUtilities.getBroadcastAddress()).decrementAndGet();
+            int qsz = MessagingService.instance().getPendingRequestsCounter(FBUtilities.getBroadcastAddress()).decrementAndGet();
+            MessagingService.instance().updateMetricsLocal(qsz, serviceTimeInNanos);
         }
     }
 

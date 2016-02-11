@@ -15,6 +15,7 @@ import akka.actor.Props;
 import com.typesafe.config.Config;
 import com.typesafe.config.ConfigFactory;
 import org.apache.cassandra.net.MessageIn;
+import org.apache.cassandra.utils.FBUtilities;
 
 public class HostTracker
 {
@@ -152,7 +153,21 @@ public class HostTracker
         double serviceTimeInMillis = ByteBuffer.wrap((byte[]) message.parameters.get(C3Metrics.MU)).getLong() / 1000000.0;
         double latencyInMillis = latency / 1000000.0;
 
+        assert serviceTimeInMillis < latencyInMillis;
         ScoreTracker scoreTracker = getScoreTracker(message.from);
         scoreTracker.updateNodeScore(queueSize, serviceTimeInMillis, latencyInMillis);
     }
+
+    // Required for handling coordinator local reads correctly
+    public void updateMetricsLocal(int queueSize, long serviceTime) {
+        final InetAddress from = FBUtilities.getBroadcastAddress();
+        logger.trace("Local pendingJob count Endpoint: {}, Count: {} ", from, queueSize);
+
+        double serviceTimeInMillis = serviceTime / 1000000.0;
+        double latencyInMillis = serviceTimeInMillis;
+
+        ScoreTracker scoreTracker = getScoreTracker(from);
+        scoreTracker.updateNodeScore(queueSize, serviceTimeInMillis, latencyInMillis);
+    }
+
 }
