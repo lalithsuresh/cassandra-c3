@@ -707,4 +707,4 @@ preheat_kernel_page_cache: false
 dynamic_snitch: true
 score_strategy: c3_strategy
 c3_rate_limiter_max_tokens: 400
-c3_rate_interval_ms: 1000
+c3_rate_interval_ms: 20
