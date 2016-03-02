@@ -64,6 +64,7 @@ public class RateController
 
             assert (newSendingRate > 0);
         }
+        System.out.println("Current sending rate: " + currentSendingRate + " " + currentReceiveRate);
     }
 
     public double tryAcquire()
