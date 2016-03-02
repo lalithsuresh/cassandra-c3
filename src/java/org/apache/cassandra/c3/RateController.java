@@ -85,6 +85,7 @@ public class RateController
         private long lastTick = 0;
         private long eventCount = 0;
         private double lastRate = 0.0;
+        private final double ALPHA = 0.9;
 
         /**
          * @param initialRate Initial setting for the rate parameter
@@ -124,16 +125,14 @@ public class RateController
                 eventCount += requests;
                 if (now > lastTick)
                 {
-                    final double alpha = (now - lastTick) / (float) interval;
-                    currentRate = alpha * ((double) eventCount) + (1 - alpha) * currentRate;
+                    currentRate = ALPHA  * ((double) eventCount) + (1 - ALPHA ) * currentRate;
                     lastTick = now;
                     eventCount = 0;
                 }
             }
             else
             {
-                final double alpha = (now - lastTick) / (float) interval;
-                currentRate = alpha * ((double) eventCount) + (1 - alpha) * currentRate;
+                currentRate = ALPHA  * ((double) eventCount) + (1 - ALPHA ) * currentRate;
                 lastTick = now;
                 eventCount = 0;
             }
